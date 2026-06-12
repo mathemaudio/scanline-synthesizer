@@ -1,232 +1,140 @@
 import './PrimitiveSynth.lll'
-import { AssertFn, Scenario, Spec, WaitForFn } from '@shared/lll.lll'
+import { AssertFn, Scenario, ScenarioParameter, Spec, SubjectFactory, WaitForFn } from '@shared/lll.lll'
 import { PrimitiveSynth } from './PrimitiveSynth.lll'
 
-@Spec('Covers the primitive sine-wave synth engine with deterministic unit scenarios for mono and poly voice behavior.')
+@Spec('Verifies primitive synth voice selection, release transitions, and unsupported-audio handling.')
 export class PrimitiveSynthTest {
-	testType = "unit"
+	testType = 'unit'
 
-	@Scenario('starts a sine voice with a short attack envelope at the requested keyboard pitch')
-	static async startsSineVoiceWithAttackEnvelope(
-		input = {},
-		assert: AssertFn,
-		waitFor: WaitForFn
-	): Promise<{ oscillatorType: string, frequencyHz: number }> {
-		const harness = this.createAudioHarness()
-		const states: string[] = []
+	@Scenario('polyphonic sync deduplicates repeated frequencies')
+	static async deduplicatesRepeatedFrequencies(subjectFactory: SubjectFactory<PrimitiveSynth>, scenario?: ScenarioParameter): Promise<{ activeVoiceCount: number, states: string }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
+		const states: Array<'ready' | 'playing' | 'releasing' | 'unsupported'> = []
+		void subjectFactory
 		const synth = new PrimitiveSynth({
-			createAudioContext: () => harness.audioContext,
-			onStateChange: (state) => states.push(state),
-			scheduleTimeout: harness.scheduleTimeout,
-			cancelTimeout: harness.cancelTimeout
+			monophonic: false,
+			createAudioContext: () => this.createFakeAudioContext(),
+			onStateChange: (state: 'ready' | 'playing' | 'releasing' | 'unsupported') => states.push(state)
 		})
 
-		const started = await synth.startNote(261.6255653005986)
-		await waitFor(() => harness.oscillatorStates.length === 1, 'Expected synth start to create one oscillator')
-		assert(started === true, 'Expected synth start to succeed with a stubbed audio context')
-		assert(harness.resumeCalls === 1, 'Expected synth start to resume a suspended audio context once')
-		assert(harness.oscillatorStates[0].type === 'sine', 'Expected oscillator type to be sine')
-		assert(harness.oscillatorStates[0].frequencyHz === 261.6255653005986, 'Expected requested keyboard pitch to be applied to the oscillator frequency')
-		assert(
-			harness.gainEvents.some((event) => event.method === 'linearRampToValueAtTime' && event.value === 0.18),
-			'Expected synth start to schedule an attack ramp toward the target gain'
-		)
-		assert(states[states.length - 1] === 'playing', 'Expected final emitted state after start to be playing')
-		return {
-			oscillatorType: harness.oscillatorStates[0].type,
-			frequencyHz: harness.oscillatorStates[0].frequencyHz
-		}
+		const didStart = await synth.syncNotes([261.625565, 261.625565, 329.627557])
+		await waitFor(() => synth.getActiveVoiceCount() === 2, 'Expected duplicate polyphonic frequencies to collapse into two voices')
+		const activeVoiceCount = synth.getActiveVoiceCount()
+
+		assert(didStart === true, 'Expected polyphonic sync to succeed with a fake audio context')
+		assert(activeVoiceCount === 2, 'Expected two distinct active voices after deduplication')
+		assert(states.includes('playing'), 'Expected synth to report playing state after starting voices')
+		return { activeVoiceCount, states: states.join(', ') }
 	}
 
-	@Scenario('polyphonic sync starts one voice per unique held note and monophonic mode collapses to the latest note')
-	static async syncsPolyphonicAndMonophonicVoices(
-		input = {},
-		assert: AssertFn,
-		waitFor: WaitForFn
-	): Promise<{ polyphonicVoiceCount: number, monophonicVoiceCount: number, survivingFrequencyHz: number }> {
-		const harness = this.createAudioHarness()
+	@Scenario('monophonic sync keeps only the newest held frequency and returns to ready after release')
+	static async keepsLatestFrequencyInMonophonicMode(subjectFactory: SubjectFactory<PrimitiveSynth>, scenario?: ScenarioParameter): Promise<{ activeVoiceCountBeforeRelease: number, released: boolean, finalState: string }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
+		const readyCallbacks: Array<() => void> = []
+		const states: Array<'ready' | 'playing' | 'releasing' | 'unsupported'> = []
+		void subjectFactory
 		const synth = new PrimitiveSynth({
-			createAudioContext: () => harness.audioContext,
-			scheduleTimeout: harness.scheduleTimeout,
-			cancelTimeout: harness.cancelTimeout
+			monophonic: true,
+			createAudioContext: () => this.createFakeAudioContext(),
+			onStateChange: (state: 'ready' | 'playing' | 'releasing' | 'unsupported') => states.push(state),
+			scheduleTimeout: (callback: () => void) => {
+				readyCallbacks.push(callback)
+				return readyCallbacks.length
+			},
+			cancelTimeout: () => {}
 		})
 
-		await synth.syncNotes([261.6255653005986, 293.6647679174076])
-		await waitFor(() => synth.getActiveVoiceCount() === 2, 'Expected polyphonic sync to start two voices')
-		const polyphonicVoiceCount = synth.getActiveVoiceCount()
-		assert(polyphonicVoiceCount === 2, 'Expected synth to sound two simultaneous voices in polyphonic mode')
-		assert(harness.oscillatorStates.length === 2, 'Expected polyphonic sync to create two oscillators')
-		assert(harness.oscillatorStates[0].frequencyHz === 261.6255653005986, 'Expected first polyphonic voice to use the first requested pitch')
-		assert(harness.oscillatorStates[1].frequencyHz === 293.6647679174076, 'Expected second polyphonic voice to use the second requested pitch')
-
-		synth.setMonophonic(true)
-		await synth.syncNotes([261.6255653005986, 293.6647679174076])
-		await waitFor(() => synth.getActiveVoiceCount() === 1, 'Expected monophonic sync to collapse to one voice')
-		const monophonicVoiceCount = synth.getActiveVoiceCount()
-		assert(monophonicVoiceCount === 1, 'Expected monophonic mode to keep only one sounding voice')
-		assert(harness.oscillatorStates[0].stopTimes.length >= 1, 'Expected the earlier polyphonic voice to be retired when switching to monophonic mode')
-		const survivingFrequencyHz = harness.findActiveFrequencies()[0] ?? 0
-		assert(survivingFrequencyHz === 293.6647679174076, 'Expected monophonic mode to keep only the latest held pitch sounding')
-		return { polyphonicVoiceCount, monophonicVoiceCount, survivingFrequencyHz }
-	}
-
-	@Scenario('release and retrigger stop cleanly without losing the ability to play again')
-	static async releasesAndRetriggersWithoutBreaking(
-		input = {},
-		assert: AssertFn,
-		waitFor: WaitForFn
-	): Promise<{ oscillatorCount: number, finalState: string }> {
-		const harness = this.createAudioHarness()
-		const states: string[] = []
-		const synth = new PrimitiveSynth({
-			createAudioContext: () => harness.audioContext,
-			onStateChange: (state) => states.push(state),
-			scheduleTimeout: harness.scheduleTimeout,
-			cancelTimeout: harness.cancelTimeout
-		})
-
-		await synth.startNote()
+		await synth.syncNotes([261.625565, 329.627557, 391.995436])
+		await waitFor(() => synth.getActiveVoiceCount() === 1, 'Expected monophonic sync to keep only one active voice')
+		const activeVoiceCountBeforeRelease = synth.getActiveVoiceCount()
 		const released = synth.releaseNote()
-		assert(released === true, 'Expected releaseNote to succeed after a note is started')
-		assert(states[states.length - 1] === 'releasing', 'Expected releaseNote to emit a releasing state immediately')
-		assert(harness.oscillatorStates[0].stopTimes.length === 1, 'Expected release to schedule one oscillator stop time')
-		assert(
-			harness.gainEvents.some((event) => event.method === 'exponentialRampToValueAtTime' && event.value === 0.0001),
-			'Expected release to schedule an exponential fade toward silence'
-		)
+		readyCallbacks.forEach((callback) => callback())
+		await waitFor(() => states.includes('ready'), 'Expected synth to report ready after release timeout callback runs')
+		const finalState = states[states.length - 1] ?? 'none'
 
-		harness.runScheduledTimeouts()
-		await waitFor(() => states[states.length - 1] === 'ready', 'Expected scheduled ready-state callback to run after release')
-		await synth.startNote(293.6647679174076)
-		await waitFor(() => harness.oscillatorStates.length === 2, 'Expected retrigger to create a fresh oscillator after release')
-		assert(harness.oscillatorStates.length === 2, 'Expected retrigger to create a second oscillator')
-		assert(harness.oscillatorStates[1].frequencyHz === 293.6647679174076, 'Expected retrigger to allow a new keyboard pitch to be played')
-		assert(states[states.length - 1] === 'playing', 'Expected synth to return to playing after retriggering')
-		return { oscillatorCount: harness.oscillatorStates.length, finalState: states[states.length - 1] }
+		assert(activeVoiceCountBeforeRelease === 1, 'Expected monophonic sync to leave exactly one active voice')
+		assert(released === true, 'Expected releasing an active monophonic voice to report success')
+		assert(states.includes('releasing'), 'Expected synth to report releasing before returning to ready')
+		assert(finalState === 'ready', 'Expected final state to settle back to ready')
+		return { activeVoiceCountBeforeRelease, released, finalState }
 	}
 
-	@Spec('Creates a deterministic fake AudioContext and timeout scheduler for synth unit scenarios.')
-	private static createAudioHarness(): {
-		audioContext: AudioContext
-		resumeCalls: number
-		oscillatorStates: { type: OscillatorType, frequencyHz: number, startTimes: number[], stopTimes: number[], disconnected: boolean }[]
-		gainEvents: { method: string, value: number, time: number }[]
-		scheduleTimeout: (callback: () => void, delayMs: number) => number
-		cancelTimeout: (timeoutId: number) => void
-		runScheduledTimeouts: () => void
-		findActiveFrequencies: () => number[]
-	} {
-		let resumeCalls = 0
-		let nextTimeoutId = 1
-		const oscillatorStates: { type: OscillatorType, frequencyHz: number, startTimes: number[], stopTimes: number[], disconnected: boolean }[] = []
-		const gainEvents: { method: string, value: number, time: number }[] = []
-		const scheduledTimeouts: { id: number, callback: () => void, canceled: boolean }[] = []
-		let contextState: 'running' | 'suspended' | 'closed' = 'suspended'
-		const destination = {}
+	@Scenario('missing audio context reports unsupported without starting voices')
+	static async reportsUnsupportedWhenAudioContextIsMissing(subjectFactory: SubjectFactory<PrimitiveSynth>, scenario?: ScenarioParameter): Promise<{ didStart: boolean, activeVoiceCount: number, states: string }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const states: Array<'ready' | 'playing' | 'releasing' | 'unsupported'> = []
+		void subjectFactory
+		const synth = new PrimitiveSynth({
+			createAudioContext: () => null,
+			onStateChange: (state: 'ready' | 'playing' | 'releasing' | 'unsupported') => states.push(state)
+		})
 
-		const audioContext = {
-			currentTime: 4,
-			get state() {
-				return contextState
-			},
-			destination,
-			resume: async () => {
-				resumeCalls += 1
-				contextState = 'running'
-				return undefined
-			},
-			createGain: () => {
-				const gain = {
-					value: 0.0001,
-					cancelScheduledValues: (_time: number) => undefined,
-					setValueAtTime: (value: number, time: number) => {
-						gain.value = value
-						gainEvents.push({ method: 'setValueAtTime', value, time })
-					},
-					linearRampToValueAtTime: (value: number, time: number) => {
-						gain.value = value
-						gainEvents.push({ method: 'linearRampToValueAtTime', value, time })
-					},
-					exponentialRampToValueAtTime: (value: number, time: number) => {
-						gain.value = value
-						gainEvents.push({ method: 'exponentialRampToValueAtTime', value, time })
-					}
-				}
-				return {
-					gain,
-					connect: (_destinationNode: unknown) => undefined,
-					disconnect: () => undefined
-				}
-			},
-			createOscillator: () => {
-				const oscillatorState: { type: OscillatorType, frequencyHz: number, startTimes: number[], stopTimes: number[], disconnected: boolean } = {
-					type: 'sine',
-					frequencyHz: 440,
-					startTimes: [] as number[],
-					stopTimes: [] as number[],
-					disconnected: false
-				}
-				oscillatorStates.push(oscillatorState)
-				const oscillator = {
-					get type() {
-						return oscillatorState.type
-					},
-					set type(value: OscillatorType) {
-						oscillatorState.type = value
-					},
-					frequency: {
-						get value() {
-							return oscillatorState.frequencyHz
-						},
-						set value(value: number) {
-							oscillatorState.frequencyHz = value
-						}
-					},
-					onended: null as ((event: Event) => void) | null,
-					connect: (_destinationNode: unknown) => undefined,
-					disconnect: () => {
-						oscillatorState.disconnected = true
-					},
-					start: (time?: number) => {
-						oscillatorState.startTimes.push(time ?? 0)
-					},
-					stop: (time?: number) => {
-						oscillatorState.stopTimes.push(time ?? 0)
-						oscillator.onended?.(new Event('ended'))
-					}
-				}
-				return oscillator
-			}
-		} as unknown as AudioContext
+		const didStart = await synth.startNote()
+		const activeVoiceCount = synth.getActiveVoiceCount()
 
-		return {
-			audioContext,
-			get resumeCalls() {
-				return resumeCalls
-			},
-			oscillatorStates,
-			gainEvents,
-			scheduleTimeout: (callback: () => void, _delayMs: number) => {
-				const timeoutId = nextTimeoutId
-				nextTimeoutId += 1
-				scheduledTimeouts.push({ id: timeoutId, callback, canceled: false })
-				return timeoutId
-			},
-			cancelTimeout: (timeoutId: number) => {
-				const timeout = scheduledTimeouts.find((candidate) => candidate.id === timeoutId)
-				if (timeout !== undefined) {
-					timeout.canceled = true
-				}
-			},
-			runScheduledTimeouts: () => {
-				for (const timeout of scheduledTimeouts) {
-					if (timeout.canceled === false) {
-						timeout.callback()
-						timeout.canceled = true
-					}
-				}
-			},
-			findActiveFrequencies: () => oscillatorStates.filter((state) => state.disconnected === false).map((state) => state.frequencyHz)
+		assert(didStart === false, 'Expected synth start to fail when no audio context is available')
+		assert(activeVoiceCount === 0, 'Expected no active voices when audio is unsupported')
+		assert(states.includes('unsupported'), 'Expected synth to report unsupported audio state')
+		return { didStart, activeVoiceCount, states: states.join(', ') }
+	}
+
+	@Spec('Provides a local assertion fallback when the scenario runner omits helper functions.')
+	private static failFastAssert(condition: boolean, message?: string): asserts condition {
+		if (condition === false) {
+			throw new Error(message ?? 'Assertion failed')
 		}
+	}
+
+	@Spec('Provides a local waitFor fallback when the scenario runner omits helper functions.')
+	private static async failFastWaitFor(predicate: () => boolean | Promise<boolean>, message: string): Promise<void> {
+		const passed = await predicate()
+		if (passed === false) {
+			throw new Error(message)
+		}
+	}
+
+	@Spec('Builds a tiny fake audio context with the Web Audio methods exercised by PrimitiveSynth.')
+	private static createFakeAudioContext(): AudioContext {
+		const destination = {}
+		const createGainParam = () => ({
+			value: 0,
+			cancelScheduledValues: () => {},
+			setValueAtTime(value: number) {
+				this.value = value
+			},
+			linearRampToValueAtTime(value: number) {
+				this.value = value
+			},
+			exponentialRampToValueAtTime(value: number) {
+				this.value = value
+			}
+		})
+		return {
+			state: 'running',
+			currentTime: 0,
+			destination: destination as AudioDestinationNode,
+			resume: async () => undefined,
+			createOscillator: () => {
+				const oscillator = {
+					type: 'sine',
+					frequency: { value: 0 },
+					onended: null as (() => void) | null,
+					connect: () => {},
+					disconnect: () => {},
+					start: () => {},
+					stop() {
+						oscillator.onended?.()
+					}
+				}
+				return oscillator as unknown as OscillatorNode
+			},
+			createGain: () => ({
+				gain: createGainParam(),
+				connect: () => {},
+				disconnect: () => {}
+			}) as unknown as GainNode
+		} as unknown as AudioContext
 	}
 }

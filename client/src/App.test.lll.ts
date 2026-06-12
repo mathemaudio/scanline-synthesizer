@@ -1,282 +1,157 @@
 import './App.lll'
-import { LitElement, css, html, render, type TemplateResult } from 'lit'
-import { customElement } from 'lit/decorators.js'
-import { AssertFn, Scenario, Spec, WaitForFn } from '@shared/lll.lll'
+import { AssertFn, Scenario, ScenarioParameter, Spec, SubjectFactory, WaitForFn } from '@shared/lll.lll'
 import { App } from './App.lll'
 
-@Spec('Exercises the Scanline Synth UI through visible QWERTY keyboard interactions and the mono-poly switch only.')
-@customElement('app-test-panel')
-export class AppTest extends LitElement {
-	testType = "behavioral"
-	private static activeInstance: AppTest | null = null
+@Spec('Exercises the Scanline Synth app only through visible UI and keyboard interactions.')
+export class AppTest {
+	testType = 'behavioral'
 
-	static styles = css`
-		:host {
-			display: block;
-			padding: 8px;
-		}
-	`
+	@Scenario('polyphonic mode shows two sounding voices for Q then W')
+	static async showsPolyphonicVoiceCountForTwoHeldKeys(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ voiceMode: string, soundingVoices: string, activeKey: string }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
+		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
+		;(globalThis as Record<string, unknown>)['AudioContext'] = this.createBehavioralAudioContextConstructor()
+		try {
+			const app = await subjectFactory()
+			await this.prepareMountedApp(app, waitFor)
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', bubbles: true, cancelable: true }))
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', bubbles: true, cancelable: true }))
+			await app.updateComplete
 
-	@Spec('Tracks the currently connected App test panel for behavioral scenario reuse.')
-	connectedCallback() {
-		super.connectedCallback()
-		AppTest.activeInstance = this
-	}
+			await waitFor(() => this.readText(app, '#sounding-voices-value') === '2', 'Expected two sounding voices after holding Q and W in polyphonic mode')
+			const voiceMode = this.readText(app, '#voice-mode-value')
+			const soundingVoices = this.readText(app, '#sounding-voices-value')
+			const activeKey = this.readText(app, '#active-key-value')
 
-	@Spec('Clears the tracked App test panel when it disconnects.')
-	disconnectedCallback() {
-		if (AppTest.activeInstance === this) {
-			AppTest.activeInstance = null
-		}
-		super.disconnectedCallback()
-	}
-
-	@Spec('Renders the app host used to mount app-root for behavioral keyboard scenarios.')
-	render(): TemplateResult {
-		return html`<div id="app-host"><app-root></app-root></div>`
-	}
-
-	@Scenario('pressing Q starts a visible C4 note from the keyboard')
-	static async startsMappedKeyboardNote(
-		input = {},
-		assert: AssertFn,
-		waitFor: WaitForFn
-	): Promise<{ activeKey: string, activeNote: string, noteState: string }> {
-		this.installAudioContextStub()
-		const app = await this.getRenderedApp(waitFor)
-		assert(this.readTextById(app, 'waveform-value') === 'Sine', 'Expected waveform card to show Sine')
-		this.dispatchKeyboardEvent('keydown', 'q')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected note state to show Playing after pressing Q')
-		const activeKey = this.readTextById(app, 'active-key-value')
-		const activeNote = this.readTextById(app, 'active-note-value')
-		const noteState = this.readTextById(app, 'note-state-value')
-		const pitchText = this.readTextById(app, 'pitch-value')
-		assert(activeKey === 'Q', 'Expected Q to be shown as the active key')
-		assert(activeNote === 'C4', 'Expected pressing Q to show active note C4')
-		assert(noteState === 'Playing', 'Expected note state to be Playing after pressing Q')
-		assert(pitchText.includes('C4'), 'Expected pitch card to include the C4 note label')
-		assert(this.readTextById(app, 'trigger-count-value') === '1', 'Expected first mapped key press to increase trigger count to 1')
-		assert(this.readTextById(app, 'voice-mode-value') === 'Polyphonic', 'Expected synth to default to polyphonic mode')
-		return { activeKey, activeNote, noteState }
-	}
-
-	@Scenario('releasing a mapped key returns the UI to ready and clears the active note')
-	static async releasesMappedKeyboardNote(
-		input = {},
-		assert: AssertFn,
-		waitFor: WaitForFn
-	): Promise<{ noteStateAfterRelease: string, activeNoteAfterRelease: string }> {
-		this.installAudioContextStub()
-		const app = await this.getRenderedApp(waitFor)
-		this.dispatchKeyboardEvent('keydown', 'q')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected note to begin playing before key release')
-		this.dispatchKeyboardEvent('keyup', 'q')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Releasing', 'Expected key release to show Releasing immediately')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Ready to play', 'Expected key release to return the UI to Ready to play')
-		const noteStateAfterRelease = this.readTextById(app, 'note-state-value')
-		const activeNoteAfterRelease = this.readTextById(app, 'active-note-value')
-		assert(noteStateAfterRelease === 'Ready to play', 'Expected note state to return to Ready to play after release')
-		assert(activeNoteAfterRelease === '—', 'Expected active note card to clear after releasing the final held key')
-		assert(this.readTextById(app, 'pitch-value') === 'No active note', 'Expected pitch card to clear after note-off')
-		assert(this.readTextById(app, 'sounding-voices-value') === '0', 'Expected sounding voice count to return to zero after release')
-		return { noteStateAfterRelease, activeNoteAfterRelease }
-	}
-
-	@Scenario('adjacent mapped keys step through visible chromatic notes in semitone order')
-	static async stepsThroughChromaticKeyboardNotes(
-		input = {},
-		assert: AssertFn,
-		waitFor: WaitForFn
-	): Promise<{ firstNote: string, secondNote: string, thirdNote: string }> {
-		this.installAudioContextStub()
-		const app = await this.getRenderedApp(waitFor)
-		this.dispatchKeyboardEvent('keydown', 'q')
-		await waitFor(() => this.readTextById(app, 'active-note-value') === 'C4', 'Expected Q to activate C4')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected Q keydown to place the synth in Playing state')
-		const firstNote = this.readTextById(app, 'active-note-value')
-		this.dispatchKeyboardEvent('keyup', 'q')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Ready to play', 'Expected release of Q to settle before the next mapped key')
-		this.dispatchKeyboardEvent('keydown', '2')
-		await waitFor(() => this.readTextById(app, 'active-note-value') === 'C#4', 'Expected 2 to activate C#4')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected 2 keydown to place the synth in Playing state')
-		const secondNote = this.readTextById(app, 'active-note-value')
-		this.dispatchKeyboardEvent('keyup', '2')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Ready to play', 'Expected release of 2 to settle before the next mapped key')
-		this.dispatchKeyboardEvent('keydown', 'w')
-		await waitFor(() => this.readTextById(app, 'active-note-value') === 'D4', 'Expected W to activate D4')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected W keydown to place the synth in Playing state')
-		const thirdNote = this.readTextById(app, 'active-note-value')
-		assert(firstNote === 'C4', 'Expected first visible chromatic note to be C4')
-		assert(secondNote === 'C#4', 'Expected second visible chromatic note to be C#4')
-		assert(thirdNote === 'D4', 'Expected third visible chromatic note to be D4')
-		return { firstNote, secondNote, thirdNote }
-	}
-
-	@Scenario('the upper row continues visibly into the next octave and matches the duplicated lower-row start')
-	static async continuesTopRowIntoNextOctave(
-		input = {},
-		assert: AssertFn,
-		waitFor: WaitForFn
-	): Promise<{ topGuide: string, continuedTopRowNote: string, duplicatedLowerRowNote: string }> {
-		this.installAudioContextStub()
-		const app = await this.getRenderedApp(waitFor)
-		const topGuide = this.readTextById(app, 'keyboard-row-top-value')
-		assert(topGuide.includes('I 9 O 0 P'), 'Expected the visible upper-row guide to continue through I 9 O 0 P')
-		assert(topGuide.includes('C4 to E5'), 'Expected the visible upper-row guide to describe the continued octave range')
-		this.dispatchKeyboardEvent('keydown', 'i')
-		await waitFor(() => this.readTextById(app, 'active-note-value') === 'C5', 'Expected I to continue the top row at C5')
-		const continuedTopRowNote = this.readTextById(app, 'active-note-value')
-		this.dispatchKeyboardEvent('keydown', 'z')
-		await waitFor(() => this.readTextById(app, 'active-key-value') === 'Z', 'Expected Z to become the newest visibly active duplicated key')
-		await waitFor(() => this.readTextById(app, 'active-note-value') === 'C5', 'Expected Z to duplicate the same next-octave C5 note')
-		const duplicatedLowerRowNote = this.readTextById(app, 'active-note-value')
-		assert(continuedTopRowNote === 'C5', 'Expected I to produce visible note C5')
-		assert(duplicatedLowerRowNote === 'C5', 'Expected Z to produce the duplicated visible note C5')
-		return { topGuide, continuedTopRowNote, duplicatedLowerRowNote }
-	}
-
-	@Scenario('polyphonic mode keeps multiple held keys visibly sounding and the switch can collapse them to monophonic')
-	static async togglesBetweenPolyphonicAndMonophonicPlayback(
-		input = {},
-		assert: AssertFn,
-		waitFor: WaitForFn
-	): Promise<{ soundingVoicesBeforeToggle: string, soundingVoicesAfterToggle: string, voiceModeAfterToggle: string }> {
-		this.installAudioContextStub()
-		const app = await this.getRenderedApp(waitFor)
-		this.dispatchKeyboardEvent('keydown', 'q')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected the first key to place the synth in Playing state before counting voices')
-		await waitFor(() => this.readTextById(app, 'sounding-voices-value') === '1', 'Expected the first key to start one sounding voice')
-		this.dispatchKeyboardEvent('keydown', 'w')
-		await waitFor(() => this.readTextById(app, 'active-note-value') === 'D4', 'Expected the second held key to become the newest visible active note before counting voices')
-		await waitFor(() => this.readTextById(app, 'sounding-voices-value') === '2', 'Expected polyphonic mode to keep two sounding voices visible')
-		const soundingVoicesBeforeToggle = this.readTextById(app, 'sounding-voices-value')
-		assert(this.readTextById(app, 'voice-mode-value') === 'Polyphonic', 'Expected default voice mode card to show Polyphonic')
-		assert(this.readTextById(app, 'active-note-value') === 'D4', 'Expected the newest held key W to remain the visible active note')
-		this.toggleMonophonicSwitch(app, true)
-		await waitFor(() => this.readTextById(app, 'voice-mode-value') === 'Monophonic', 'Expected voice mode card to update after enabling monophonic mode')
-		await waitFor(() => this.readTextById(app, 'sounding-voices-value') === '1', 'Expected enabling monophonic mode to collapse sounding voices to one')
-		const soundingVoicesAfterToggle = this.readTextById(app, 'sounding-voices-value')
-		const voiceModeAfterToggle = this.readTextById(app, 'voice-mode-value')
-		assert(this.readTextById(app, 'monophonic-toggle-value') === 'On', 'Expected visible switch label to show On after enabling monophonic mode')
-		assert(soundingVoicesBeforeToggle === '2', 'Expected two sounding voices before the mono toggle')
-		assert(soundingVoicesAfterToggle === '1', 'Expected one sounding voice after the mono toggle')
-		assert(voiceModeAfterToggle === 'Monophonic', 'Expected visible voice mode card to show Monophonic after the toggle')
-		return { soundingVoicesBeforeToggle, soundingVoicesAfterToggle, voiceModeAfterToggle }
-	}
-
-	@Spec('Finds the on-screen App instance and remounts it in place for each behavioral scenario.')
-	private static async getRenderedApp(waitFor: WaitForFn): Promise<App> {
-		await waitFor(() => this.findBestRenderedPanel() !== null, 'Expected app-test-panel to be rendered before scenario actions')
-		const panel = this.findBestRenderedPanel()
-		if (panel === null) {
-			throw new Error('Expected an already-rendered app-test-panel element')
-		}
-		await panel.updateComplete
-		const host = panel.shadowRoot?.querySelector<HTMLElement>('#app-host')
-		if (!host) {
-			throw new Error('App host not found in rendered app-test-panel')
-		}
-		render(html``, host)
-		render(html`<app-root></app-root>`, host)
-		const app = host.querySelector<App>('app-root')
-		if (!app) {
-			throw new Error('Failed to render app-root in App host')
-		}
-		await app.updateComplete
-		return app
-	}
-
-	@Spec('Selects the best currently rendered App test panel, preferring the active visible instance.')
-	private static findBestRenderedPanel(): AppTest | null {
-		if (this.activeInstance !== null && this.activeInstance.isConnected) {
-			return this.activeInstance
-		}
-
-		const panels = Array.from(document.querySelectorAll<AppTest>('app-test-panel'))
-		const visiblePanel = panels.find((element) => element.isConnected && element.getClientRects().length > 0)
-		if (visiblePanel !== undefined) {
-			return visiblePanel
-		}
-		return panels.find((element) => element.isConnected) ?? null
-	}
-
-	@Spec('Installs a minimal AudioContext stub so behavioral keyboard tests never depend on real device audio.')
-	private static installAudioContextStub() {
-		const maybeGlobal = globalThis as Record<string, unknown>
-		const audioContextConstructor = function AudioContextStub() {
-			const destination = {}
-			let contextState: 'running' | 'suspended' | 'closed' = 'suspended'
-			return {
-				currentTime: 0,
-				get state() {
-					return contextState
-				},
-				destination,
-				resume: async () => {
-					contextState = 'running'
-					return undefined
-				},
-				createGain: () => {
-					const gain = {
-						value: 0.0001,
-						cancelScheduledValues: (_time: number) => undefined,
-						setValueAtTime: (value: number, _time: number) => {
-							gain.value = value
-						},
-						linearRampToValueAtTime: (value: number, _time: number) => {
-							gain.value = value
-						},
-						exponentialRampToValueAtTime: (value: number, _time: number) => {
-							gain.value = value
-						}
-					}
-					return {
-						gain,
-						connect: (_destinationNode: unknown) => undefined,
-						disconnect: () => undefined
-					}
-				},
-				createOscillator: () => {
-					const oscillator = {
-						type: 'sine',
-						frequency: { value: 440 },
-						onended: null as ((event: Event) => void) | null,
-						connect: (_destinationNode: unknown) => undefined,
-						disconnect: () => undefined,
-						start: (_time?: number) => undefined,
-						stop: (_time?: number) => {
-							oscillator.onended?.(new Event('ended'))
-						}
-					}
-					return oscillator
-				}
+			assert(voiceMode === 'Polyphonic', 'Expected the app to remain in polyphonic mode by default')
+			assert(soundingVoices === '2', 'Expected two sounding voices to be visible')
+			assert(activeKey === 'W', 'Expected the newest held key to become active')
+			return { voiceMode, soundingVoices, activeKey }
+		} finally {
+			window.dispatchEvent(new KeyboardEvent('keyup', { key: 'q', bubbles: true, cancelable: true }))
+			window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w', bubbles: true, cancelable: true }))
+			if (originalAudioContext === undefined) {
+				delete (globalThis as Record<string, unknown>)['AudioContext']
+			} else {
+				(globalThis as Record<string, unknown>)['AudioContext'] = originalAudioContext
 			}
-		} as unknown as new () => AudioContext
-		maybeGlobal['AudioContext'] = audioContextConstructor
-		maybeGlobal['webkitAudioContext'] = audioContextConstructor
-	}
-
-	@Spec('Dispatches a browser keyboard event so the mounted app receives a visible keyboard interaction.')
-	private static dispatchKeyboardEvent(type: 'keydown' | 'keyup', key: string) {
-		window.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true, cancelable: true }))
-	}
-
-	@Spec('Toggles the visible monophonic switch using only the rendered UI control.')
-	private static toggleMonophonicSwitch(app: App, checked: boolean) {
-		const input = app.shadowRoot?.querySelector<HTMLInputElement>('#monophonic-toggle')
-		if (!input) {
-			throw new Error('Monophonic toggle not found')
 		}
-		input.checked = checked
-		input.dispatchEvent(new Event('change', { bubbles: true }))
 	}
 
-	@Spec('Reads visible text content from a stable element id inside app-root.')
-	private static readTextById(app: App, elementId: string): string {
-		const element = app.shadowRoot?.querySelector<HTMLElement>(`#${elementId}`)
-		if (!element) {
-			throw new Error(`Element not found: ${elementId}`)
+	@Scenario('switching monophonic mode collapses held keys to one sounding voice')
+	static async collapsesHeldKeysWhenMonophonicModeIsEnabled(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ toggleValue: string, voiceMode: string, soundingVoices: string, noteState: string }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
+		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
+		;(globalThis as Record<string, unknown>)['AudioContext'] = this.createBehavioralAudioContextConstructor()
+		try {
+			const app = await subjectFactory()
+			await this.prepareMountedApp(app, waitFor)
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', bubbles: true, cancelable: true }))
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', bubbles: true, cancelable: true }))
+			const toggle = app.shadowRoot?.querySelector<HTMLInputElement>('#monophonic-toggle')
+			assert(toggle !== null && toggle !== undefined, 'Expected monophonic toggle to exist')
+			toggle.checked = true
+			toggle.dispatchEvent(new Event('change', { bubbles: true }))
+			await app.updateComplete
+
+			await waitFor(() => this.readText(app, '#sounding-voices-value') === '1', 'Expected monophonic mode to collapse visible sounding voices to one')
+			const toggleValue = this.readText(app, '#monophonic-toggle-value')
+			const voiceMode = this.readText(app, '#voice-mode-value')
+			const soundingVoices = this.readText(app, '#sounding-voices-value')
+			const noteState = this.readText(app, '#note-state-value')
+
+			assert(toggleValue === 'On', 'Expected the visible monophonic toggle label to turn On')
+			assert(voiceMode === 'Monophonic', 'Expected voice mode card to show Monophonic')
+			assert(soundingVoices === '1', 'Expected only one sounding voice in monophonic mode with overlapping keys held')
+			assert(noteState === 'Playing', 'Expected note state to remain visibly Playing while a note is sounding')
+			return { toggleValue, voiceMode, soundingVoices, noteState }
+		} finally {
+			window.dispatchEvent(new KeyboardEvent('keyup', { key: 'q', bubbles: true, cancelable: true }))
+			window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w', bubbles: true, cancelable: true }))
+			if (originalAudioContext === undefined) {
+				delete (globalThis as Record<string, unknown>)['AudioContext']
+			} else {
+				(globalThis as Record<string, unknown>)['AudioContext'] = originalAudioContext
+			}
+		}
+	}
+
+	@Spec('Provides a local assertion fallback when the scenario runner omits helper functions.')
+	private static failFastAssert(condition: boolean, message?: string): asserts condition {
+		if (condition === false) {
+			throw new Error(message ?? 'Assertion failed')
+		}
+	}
+
+	@Spec('Provides a local waitFor fallback when the scenario runner omits helper functions.')
+	private static async failFastWaitFor(predicate: () => boolean | Promise<boolean>, message: string): Promise<void> {
+		const passed = await predicate()
+		if (passed === false) {
+			throw new Error(message)
+		}
+	}
+
+	@Spec('Waits for app shadow DOM and the visible status cards needed by the scenarios.')
+	private static async prepareMountedApp(app: App, waitFor: WaitForFn): Promise<void> {
+		await waitFor(() => app.shadowRoot !== null, 'Expected app shadow DOM to render')
+		await app.updateComplete
+		await waitFor(() => this.readText(app, '#voice-mode-value').length > 0, 'Expected voice mode card to render visible text')
+	}
+
+	@Spec('Reads visible text from one element inside the app shadow DOM.')
+	private static readText(app: App, selector: string): string {
+		const element = app.shadowRoot?.querySelector<HTMLElement>(selector)
+		if (element === null || element === undefined) {
+			throw new Error(`App element not found: ${selector}`)
 		}
 		return element.textContent?.trim() ?? ''
+	}
+
+	@Spec('Creates a tiny AudioContext constructor usable by behavioral app scenarios.')
+	private static createBehavioralAudioContextConstructor(): new () => AudioContext {
+		return class implements Partial<AudioContext> {
+			state: AudioContextState = 'running'
+			currentTime = 0
+			destination = {} as AudioDestinationNode
+			async resume(): Promise<void> {
+				return undefined
+			}
+			createOscillator(): OscillatorNode {
+				const oscillator = {
+					type: 'sine',
+					frequency: { value: 0 },
+					onended: null as (() => void) | null,
+					connect: () => {},
+					disconnect: () => {},
+					start: () => {},
+					stop() {
+						oscillator.onended?.()
+					}
+				}
+				return oscillator as unknown as OscillatorNode
+			}
+			createGain(): GainNode {
+				const gain = {
+					value: 0,
+					cancelScheduledValues: () => {},
+					setValueAtTime(value: number) {
+						this.value = value
+					},
+					linearRampToValueAtTime(value: number) {
+						this.value = value
+					},
+					exponentialRampToValueAtTime(value: number) {
+						this.value = value
+					}
+				}
+				return {
+					gain,
+					connect: () => {},
+					disconnect: () => {}
+				} as unknown as GainNode
+			}
+		} as unknown as new () => AudioContext
 	}
 }

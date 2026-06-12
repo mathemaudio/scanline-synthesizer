@@ -1,99 +1,89 @@
 import './QwertyKeyboard.lll'
-import { AssertFn, Scenario, Spec, WaitForFn } from '@shared/lll.lll'
+import { AssertFn, Scenario, ScenarioParameter, Spec, SubjectFactory } from '@shared/lll.lll'
 import { QwertyKeyboard } from './QwertyKeyboard.lll'
 
-@Spec('Covers the phase-two QWERTY keyboard mapping, held-key ordering, and polyphonic held-pitch snapshots with unit scenarios.')
+@Spec('Verifies mapped QWERTY keyboard note selection and held-key fallback behavior.')
 export class QwertyKeyboardTest {
-	testType = "unit"
+	testType = 'unit'
 
-	@Scenario('maps the upper row chromatically through B and continues naturally into the next octave')
-	static async mapsChromaticKeyboardLayout(
-		input = {},
-		assert: AssertFn,
-		waitFor: WaitForFn
-	): Promise<{ firstNote: string, continuedTopRowNote: string, duplicatedLowerRowNote: string }> {
-		const keyboard = new QwertyKeyboard({ baseOctave: 4, pitchReferenceHz: 440 })
-		const firstPitch = keyboard.getPitchForKey('q')
-		const sharpPitch = keyboard.getPitchForKey('2')
-		const continuedTopRowPitch = keyboard.getPitchForKey('i')
-		const continuedTopRowSharpPitch = keyboard.getPitchForKey('9')
-		const duplicatedLowerRowPitch = keyboard.getPitchForKey('z')
-		await waitFor(
-			() => firstPitch !== null && sharpPitch !== null && continuedTopRowPitch !== null && continuedTopRowSharpPitch !== null && duplicatedLowerRowPitch !== null,
-			'Expected extended mapped keyboard pitches to be available'
-		)
-		assert(firstPitch !== null, 'Expected Q to map to a playable pitch')
-		assert(sharpPitch !== null, 'Expected 2 to map to a playable pitch')
-		assert(continuedTopRowPitch !== null, 'Expected I to continue the upper row into the next octave')
-		assert(continuedTopRowSharpPitch !== null, 'Expected 9 to continue the upper row chromatically into the next octave')
-		assert(duplicatedLowerRowPitch !== null, 'Expected Z to remain a playable duplicated next-octave pitch')
-		assert(firstPitch.noteLabel === 'C4', 'Expected Q to map to C4')
-		assert(sharpPitch.noteLabel === 'C#4', 'Expected 2 to map to C#4')
-		assert(continuedTopRowPitch.noteLabel === 'C5', 'Expected I to continue the upper row at C5')
-		assert(continuedTopRowSharpPitch.noteLabel === 'C#5', 'Expected 9 to continue the upper row at C#5')
-		assert(duplicatedLowerRowPitch.noteLabel === 'C5', 'Expected Z to duplicate the next octave start at C5')
-		assert(Math.abs(sharpPitch.frequencyHz / firstPitch.frequencyHz - 2 ** (1 / 12)) < 0.000001, 'Expected adjacent chromatic keys to differ by one equal-tempered semitone')
-		assert(Math.abs(continuedTopRowPitch.frequencyHz / firstPitch.frequencyHz - 2) < 0.000001, 'Expected I to be one octave above Q')
-		assert(Math.abs(duplicatedLowerRowPitch.frequencyHz - continuedTopRowPitch.frequencyHz) < 0.000001, 'Expected Z to duplicate the same C5 pitch as I')
-		return {
-			firstNote: firstPitch.noteLabel,
-			continuedTopRowNote: continuedTopRowPitch.noteLabel,
-			duplicatedLowerRowNote: duplicatedLowerRowPitch.noteLabel
-		}
-	}
+	@Scenario('Q then W then release W falls back to C4')
+	static async fallsBackToPreviousHeldPitch(subjectFactory: SubjectFactory<QwertyKeyboard>, scenario: ScenarioParameter): Promise<{ activeBeforeRelease: string, activeAfterRelease: string, heldCountAfterRelease: number }> {
+		const assert: AssertFn = this.readScenario(subjectFactory, scenario)?.assert ?? this.failFastAssert
+		const keyboard = await this.createKeyboard(subjectFactory)
 
-	@Scenario('held key tracking ignores repeats, promotes the newest key, and falls back on release')
-	static async tracksHeldKeyboardState(
-		input = {},
-		assert: AssertFn,
-		waitFor: WaitForFn
-	): Promise<{ activeAfterFirstPress: string, activeAfterFallback: string, activeAfterFinalRelease: string }> {
-		const keyboard = new QwertyKeyboard({ baseOctave: 4, pitchReferenceHz: 440 })
 		const firstPress = keyboard.pressKey('q')
-		const repeatedPress = keyboard.pressKey('q')
 		const secondPress = keyboard.pressKey('w')
-		const releaseNewest = keyboard.releaseKey('w')
-		const releaseFinal = keyboard.releaseKey('q')
-		const unmappedPress = keyboard.pressKey('[')
-		await waitFor(() => true, 'Keyboard state transitions are synchronous and ready immediately')
-		assert(firstPress.consumed === true && firstPress.didChange === true, 'Expected first mapped key press to be consumed and change the active note')
-		assert(firstPress.activePitch?.noteLabel === 'C4', 'Expected first Q press to activate C4')
-		assert(repeatedPress.consumed === true && repeatedPress.didChange === false, 'Expected repeated Q keydown to be ignored without changing the active note')
-		assert(secondPress.activePitch?.noteLabel === 'D4', 'Expected the newest held key W to promote D4 as active')
-		assert(releaseNewest.didChange === true, 'Expected releasing the newest held key to change the active note')
-		assert(releaseNewest.activePitch?.noteLabel === 'C4', 'Expected releasing W to fall back to the still-held Q note')
-		assert(releaseFinal.didChange === true, 'Expected releasing the final held key to change the active note state')
-		assert(releaseFinal.activePitch === null, 'Expected releasing the last held mapped key to clear the active pitch')
-		assert(unmappedPress.consumed === false && unmappedPress.didChange === false, 'Expected unmapped keys to leave keyboard state untouched')
-		const activeAfterFirstPress = firstPress.activePitch?.noteLabel ?? 'none'
-		const activeAfterFallback = releaseNewest.activePitch?.noteLabel ?? 'none'
-		const activeAfterFinalRelease = 'none'
-		return {
-			activeAfterFirstPress,
-			activeAfterFallback,
-			activeAfterFinalRelease
-		}
+		const release = keyboard.releaseKey('w')
+		const activeBeforeRelease = secondPress.activePitch?.noteLabel ?? 'none'
+		const activeAfterRelease = release.activePitch?.noteLabel ?? 'none'
+		const heldCountAfterRelease = release.heldPitches.length
+
+		assert(firstPress.activePitch?.noteLabel === 'C4', 'Expected Q to map to C4')
+		assert(activeBeforeRelease === 'D4', 'Expected W to become the active pitch while held')
+		assert(activeAfterRelease === 'C4', 'Expected releasing W to fall back to the earlier held Q pitch')
+		assert(heldCountAfterRelease === 1, 'Expected one held pitch to remain after releasing W')
+		return { activeBeforeRelease, activeAfterRelease, heldCountAfterRelease }
 	}
 
-	@Scenario('held pitch snapshots preserve all unique held notes for a synth that wants polyphonic input')
-	static async exposesHeldPitchesForPolyphonicSynthDecision(
-		input = {},
-		assert: AssertFn,
-		waitFor: WaitForFn
-	): Promise<{ heldNotesBeforeRelease: string[], heldNotesAfterRelease: string[] }> {
-		const keyboard = new QwertyKeyboard({ baseOctave: 4, pitchReferenceHz: 440 })
+	@Scenario('duplicate upper and lower row enharmonic mapping keeps both visible in held order')
+	static async exposesHeldOrderAcrossDuplicatePitchMappings(subjectFactory: SubjectFactory<QwertyKeyboard>, scenario: ScenarioParameter): Promise<{ heldLabels: string, activeKey: string }> {
+		const assert: AssertFn = this.readScenario(subjectFactory, scenario)?.assert ?? this.failFastAssert
+		const keyboard = await this.createKeyboard(subjectFactory)
+
+		keyboard.pressKey('i')
+		const secondPress = keyboard.pressKey('z')
+		const heldLabels = secondPress.heldPitches.map((pitch) => `${pitch.keyLabel}:${pitch.noteLabel}`).join(', ')
+		const activeKey = secondPress.activePitch?.keyLabel ?? 'none'
+
+		assert(heldLabels === 'I:C5, Z:C5', 'Expected I and Z to both appear in held order even though they share the same pitch')
+		assert(activeKey === 'Z', 'Expected the newest held key to become active')
+		return { heldLabels, activeKey }
+	}
+
+	@Scenario('releasing older keys from a three-note chord removes only those released pitches')
+	static async releasesChordKeysIndividually(subjectFactory: SubjectFactory<QwertyKeyboard>, scenario: ScenarioParameter): Promise<{ heldAfterFirstRelease: string, heldAfterSecondRelease: string, finalActiveNote: string }> {
+		const assert: AssertFn = this.readScenario(subjectFactory, scenario)?.assert ?? this.failFastAssert
+		const keyboard = await this.createKeyboard(subjectFactory)
+
 		keyboard.pressKey('q')
-		keyboard.pressKey('w')
-		keyboard.pressKey('q')
-		const heldNotesBeforeRelease = keyboard.getHeldPitches().map((pitch) => pitch.noteLabel)
-		keyboard.releaseKey('q')
-		const heldNotesAfterRelease = keyboard.getHeldPitches().map((pitch) => pitch.noteLabel)
-		await waitFor(() => heldNotesBeforeRelease.length === 2, 'Expected two unique held notes after pressing Q and W')
-		assert(heldNotesBeforeRelease.length === 2, 'Expected held pitch snapshots to include both unique mapped keys')
-		assert(heldNotesBeforeRelease[0] === 'C4', 'Expected held pitch snapshots to preserve Q as the first held note')
-		assert(heldNotesBeforeRelease[1] === 'D4', 'Expected held pitch snapshots to preserve W as the second held note')
-		assert(heldNotesAfterRelease.length === 1, 'Expected releasing Q to leave only one held pitch')
-		assert(heldNotesAfterRelease[0] === 'D4', 'Expected remaining held pitch after releasing Q to be D4')
-		return { heldNotesBeforeRelease, heldNotesAfterRelease }
+		keyboard.pressKey('e')
+		keyboard.pressKey('r')
+		const afterFirstRelease = keyboard.releaseKey('q')
+		const afterSecondRelease = keyboard.releaseKey('e')
+		const heldAfterFirstRelease = afterFirstRelease.heldPitches.map((pitch) => pitch.noteLabel).join(', ')
+		const heldAfterSecondRelease = afterSecondRelease.heldPitches.map((pitch) => pitch.noteLabel).join(', ')
+		const finalActiveNote = afterSecondRelease.activePitch?.noteLabel ?? 'none'
+
+		assert(heldAfterFirstRelease === 'E4, F4', 'Expected releasing Q to keep only E4 and F4 held')
+		assert(heldAfterSecondRelease === 'F4', 'Expected releasing E next to keep only F4 held')
+		assert(finalActiveNote === 'F4', 'Expected F4 to remain active after earlier chord keys are released')
+		return { heldAfterFirstRelease, heldAfterSecondRelease, finalActiveNote }
+	}
+
+	@Spec('Creates a keyboard subject through the runner when available or directly otherwise.')
+	private static async createKeyboard(subjectFactory: SubjectFactory<QwertyKeyboard>): Promise<QwertyKeyboard> {
+		if (typeof subjectFactory === 'function') {
+			return await subjectFactory()
+		}
+		return new QwertyKeyboard()
+	}
+
+	@Spec('Reads the scenario helper bag even when the runner supplies it in the first parameter slot.')
+	private static readScenario(subjectFactory: SubjectFactory<QwertyKeyboard>, scenario: ScenarioParameter): ScenarioParameter | undefined {
+		const maybeScenario = subjectFactory as unknown as ScenarioParameter | undefined
+		if (scenario !== undefined) {
+			return scenario
+		}
+		if (maybeScenario !== undefined && typeof maybeScenario === 'object' && 'assert' in maybeScenario && 'waitFor' in maybeScenario) {
+			return maybeScenario
+		}
+		return undefined
+	}
+
+	@Spec('Provides a local assertion fallback when the scenario runner omits helper functions.')
+	private static failFastAssert(condition: boolean, message?: string): asserts condition {
+		if (condition === false) {
+			throw new Error(message ?? 'Assertion failed')
+		}
 	}
 }

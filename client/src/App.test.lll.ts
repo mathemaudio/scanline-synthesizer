@@ -4,7 +4,7 @@ import { customElement } from 'lit/decorators.js'
 import { AssertFn, Scenario, Spec, WaitForFn } from '@shared/lll.lll'
 import { App } from './App.lll'
 
-@Spec('Exercises the phase-one Scanline Synth UI through visible controls only.')
+@Spec('Exercises the Scanline Synth UI through visible QWERTY keyboard interactions and the mono-poly switch only.')
 @customElement('app-test-panel')
 export class AppTest extends LitElement {
 	testType = "behavioral"
@@ -31,72 +31,140 @@ export class AppTest extends LitElement {
 		super.disconnectedCallback()
 	}
 
-	@Spec('Renders the app host used to mount app-root for behavioral scenarios.')
+	@Spec('Renders the app host used to mount app-root for behavioral keyboard scenarios.')
 	render(): TemplateResult {
 		return html`<div id="app-host"><app-root></app-root></div>`
 	}
 
-	@Scenario('play tone shows the phase-one note as playing')
-	static async startsToneThroughVisibleControls(input = {}, assert: AssertFn, waitFor: WaitForFn): Promise<{ noteState: string, triggerCount: string }> {
+	@Scenario('pressing Q starts a visible C4 note from the keyboard')
+	static async startsMappedKeyboardNote(
+		input = {},
+		assert: AssertFn,
+		waitFor: WaitForFn
+	): Promise<{ activeKey: string, activeNote: string, noteState: string }> {
 		this.installAudioContextStub()
 		const app = await this.getRenderedApp(waitFor)
 		assert(this.readTextById(app, 'waveform-value') === 'Sine', 'Expected waveform card to show Sine')
-		await this.clickButtonById(app, 'play-tone-button')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected note state to show Playing after clicking Play tone')
+		this.dispatchKeyboardEvent('keydown', 'q')
+		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected note state to show Playing after pressing Q')
+		const activeKey = this.readTextById(app, 'active-key-value')
+		const activeNote = this.readTextById(app, 'active-note-value')
 		const noteState = this.readTextById(app, 'note-state-value')
-		const triggerCount = this.readTextById(app, 'trigger-count-value')
-		assert(noteState === 'Playing', 'Expected note state to equal Playing')
-		assert(triggerCount === '1', 'Expected visible trigger count to equal 1 after first play')
-		assert(this.isButtonDisabled(app, 'release-tone-button') === false, 'Expected Release tone button to be enabled while playing')
-		return { noteState, triggerCount }
+		const pitchText = this.readTextById(app, 'pitch-value')
+		assert(activeKey === 'Q', 'Expected Q to be shown as the active key')
+		assert(activeNote === 'C4', 'Expected pressing Q to show active note C4')
+		assert(noteState === 'Playing', 'Expected note state to be Playing after pressing Q')
+		assert(pitchText.includes('C4'), 'Expected pitch card to include the C4 note label')
+		assert(this.readTextById(app, 'trigger-count-value') === '1', 'Expected first mapped key press to increase trigger count to 1')
+		assert(this.readTextById(app, 'voice-mode-value') === 'Polyphonic', 'Expected synth to default to polyphonic mode')
+		return { activeKey, activeNote, noteState }
 	}
 
-	@Scenario('release tone fades out and returns the UI to ready')
-	static async releasesToneThroughVisibleControls(
+	@Scenario('releasing a mapped key returns the UI to ready and clears the active note')
+	static async releasesMappedKeyboardNote(
 		input = {},
 		assert: AssertFn,
 		waitFor: WaitForFn
-	): Promise<{ noteStateAfterRelease: string }> {
+	): Promise<{ noteStateAfterRelease: string, activeNoteAfterRelease: string }> {
 		this.installAudioContextStub()
 		const app = await this.getRenderedApp(waitFor)
-		await this.clickButtonById(app, 'play-tone-button')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected note to start playing before release')
-		await this.clickButtonById(app, 'release-tone-button')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Releasing', 'Expected note state to show Releasing immediately after release')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Ready to play', 'Expected note state to return to Ready to play after release settles')
+		this.dispatchKeyboardEvent('keydown', 'q')
+		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected note to begin playing before key release')
+		this.dispatchKeyboardEvent('keyup', 'q')
+		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Releasing', 'Expected key release to show Releasing immediately')
+		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Ready to play', 'Expected key release to return the UI to Ready to play')
 		const noteStateAfterRelease = this.readTextById(app, 'note-state-value')
-		assert(noteStateAfterRelease === 'Ready to play', 'Expected release flow to restore Ready to play state')
-		assert(this.isButtonDisabled(app, 'release-tone-button') === true, 'Expected Release tone button to be disabled after note-off settles')
-		return { noteStateAfterRelease }
+		const activeNoteAfterRelease = this.readTextById(app, 'active-note-value')
+		assert(noteStateAfterRelease === 'Ready to play', 'Expected note state to return to Ready to play after release')
+		assert(activeNoteAfterRelease === '—', 'Expected active note card to clear after releasing the final held key')
+		assert(this.readTextById(app, 'pitch-value') === 'No active note', 'Expected pitch card to clear after note-off')
+		assert(this.readTextById(app, 'sounding-voices-value') === '0', 'Expected sounding voice count to return to zero after release')
+		return { noteStateAfterRelease, activeNoteAfterRelease }
 	}
 
-	@Scenario('retriggering the tone increments the visible trigger count')
-	static async retriggersToneThroughVisibleControls(
+	@Scenario('adjacent mapped keys step through visible chromatic notes in semitone order')
+	static async stepsThroughChromaticKeyboardNotes(
 		input = {},
 		assert: AssertFn,
 		waitFor: WaitForFn
-	): Promise<{ triggerCount: string }> {
+	): Promise<{ firstNote: string, secondNote: string, thirdNote: string }> {
 		this.installAudioContextStub()
 		const app = await this.getRenderedApp(waitFor)
-		const initialTriggerCount = Number(this.readTextById(app, 'trigger-count-value'))
-		await this.clickButtonById(app, 'play-tone-button')
-		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected first click to place the note in Playing state')
-		await waitFor(
-			() => Number(this.readTextById(app, 'trigger-count-value')) === initialTriggerCount + 1,
-			'Expected first click to increase the visible trigger count by one'
-		)
-		await this.clickButtonById(app, 'play-tone-button')
-		await waitFor(
-			() => Number(this.readTextById(app, 'trigger-count-value')) === initialTriggerCount + 2,
-			'Expected second click to increase the visible trigger count by two total'
-		)
-		const triggerCount = this.readTextById(app, 'trigger-count-value')
-		assert(Number(triggerCount) === initialTriggerCount + 2, 'Expected visible trigger count to rise by two after retriggering')
-		assert(this.readTextById(app, 'note-state-value') === 'Playing', 'Expected note state to remain Playing after retriggering')
-		return { triggerCount }
+		this.dispatchKeyboardEvent('keydown', 'q')
+		await waitFor(() => this.readTextById(app, 'active-note-value') === 'C4', 'Expected Q to activate C4')
+		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected Q keydown to place the synth in Playing state')
+		const firstNote = this.readTextById(app, 'active-note-value')
+		this.dispatchKeyboardEvent('keyup', 'q')
+		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Ready to play', 'Expected release of Q to settle before the next mapped key')
+		this.dispatchKeyboardEvent('keydown', '2')
+		await waitFor(() => this.readTextById(app, 'active-note-value') === 'C#4', 'Expected 2 to activate C#4')
+		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected 2 keydown to place the synth in Playing state')
+		const secondNote = this.readTextById(app, 'active-note-value')
+		this.dispatchKeyboardEvent('keyup', '2')
+		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Ready to play', 'Expected release of 2 to settle before the next mapped key')
+		this.dispatchKeyboardEvent('keydown', 'w')
+		await waitFor(() => this.readTextById(app, 'active-note-value') === 'D4', 'Expected W to activate D4')
+		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected W keydown to place the synth in Playing state')
+		const thirdNote = this.readTextById(app, 'active-note-value')
+		assert(firstNote === 'C4', 'Expected first visible chromatic note to be C4')
+		assert(secondNote === 'C#4', 'Expected second visible chromatic note to be C#4')
+		assert(thirdNote === 'D4', 'Expected third visible chromatic note to be D4')
+		return { firstNote, secondNote, thirdNote }
 	}
 
-	@Spec('Finds the on-screen App instance and remounts it in place for each scenario.')
+	@Scenario('the upper row continues visibly into the next octave and matches the duplicated lower-row start')
+	static async continuesTopRowIntoNextOctave(
+		input = {},
+		assert: AssertFn,
+		waitFor: WaitForFn
+	): Promise<{ topGuide: string, continuedTopRowNote: string, duplicatedLowerRowNote: string }> {
+		this.installAudioContextStub()
+		const app = await this.getRenderedApp(waitFor)
+		const topGuide = this.readTextById(app, 'keyboard-row-top-value')
+		assert(topGuide.includes('I 9 O 0 P'), 'Expected the visible upper-row guide to continue through I 9 O 0 P')
+		assert(topGuide.includes('C4 to E5'), 'Expected the visible upper-row guide to describe the continued octave range')
+		this.dispatchKeyboardEvent('keydown', 'i')
+		await waitFor(() => this.readTextById(app, 'active-note-value') === 'C5', 'Expected I to continue the top row at C5')
+		const continuedTopRowNote = this.readTextById(app, 'active-note-value')
+		this.dispatchKeyboardEvent('keydown', 'z')
+		await waitFor(() => this.readTextById(app, 'active-key-value') === 'Z', 'Expected Z to become the newest visibly active duplicated key')
+		await waitFor(() => this.readTextById(app, 'active-note-value') === 'C5', 'Expected Z to duplicate the same next-octave C5 note')
+		const duplicatedLowerRowNote = this.readTextById(app, 'active-note-value')
+		assert(continuedTopRowNote === 'C5', 'Expected I to produce visible note C5')
+		assert(duplicatedLowerRowNote === 'C5', 'Expected Z to produce the duplicated visible note C5')
+		return { topGuide, continuedTopRowNote, duplicatedLowerRowNote }
+	}
+
+	@Scenario('polyphonic mode keeps multiple held keys visibly sounding and the switch can collapse them to monophonic')
+	static async togglesBetweenPolyphonicAndMonophonicPlayback(
+		input = {},
+		assert: AssertFn,
+		waitFor: WaitForFn
+	): Promise<{ soundingVoicesBeforeToggle: string, soundingVoicesAfterToggle: string, voiceModeAfterToggle: string }> {
+		this.installAudioContextStub()
+		const app = await this.getRenderedApp(waitFor)
+		this.dispatchKeyboardEvent('keydown', 'q')
+		await waitFor(() => this.readTextById(app, 'note-state-value') === 'Playing', 'Expected the first key to place the synth in Playing state before counting voices')
+		await waitFor(() => this.readTextById(app, 'sounding-voices-value') === '1', 'Expected the first key to start one sounding voice')
+		this.dispatchKeyboardEvent('keydown', 'w')
+		await waitFor(() => this.readTextById(app, 'active-note-value') === 'D4', 'Expected the second held key to become the newest visible active note before counting voices')
+		await waitFor(() => this.readTextById(app, 'sounding-voices-value') === '2', 'Expected polyphonic mode to keep two sounding voices visible')
+		const soundingVoicesBeforeToggle = this.readTextById(app, 'sounding-voices-value')
+		assert(this.readTextById(app, 'voice-mode-value') === 'Polyphonic', 'Expected default voice mode card to show Polyphonic')
+		assert(this.readTextById(app, 'active-note-value') === 'D4', 'Expected the newest held key W to remain the visible active note')
+		this.toggleMonophonicSwitch(app, true)
+		await waitFor(() => this.readTextById(app, 'voice-mode-value') === 'Monophonic', 'Expected voice mode card to update after enabling monophonic mode')
+		await waitFor(() => this.readTextById(app, 'sounding-voices-value') === '1', 'Expected enabling monophonic mode to collapse sounding voices to one')
+		const soundingVoicesAfterToggle = this.readTextById(app, 'sounding-voices-value')
+		const voiceModeAfterToggle = this.readTextById(app, 'voice-mode-value')
+		assert(this.readTextById(app, 'monophonic-toggle-value') === 'On', 'Expected visible switch label to show On after enabling monophonic mode')
+		assert(soundingVoicesBeforeToggle === '2', 'Expected two sounding voices before the mono toggle')
+		assert(soundingVoicesAfterToggle === '1', 'Expected one sounding voice after the mono toggle')
+		assert(voiceModeAfterToggle === 'Monophonic', 'Expected visible voice mode card to show Monophonic after the toggle')
+		return { soundingVoicesBeforeToggle, soundingVoicesAfterToggle, voiceModeAfterToggle }
+	}
+
+	@Spec('Finds the on-screen App instance and remounts it in place for each behavioral scenario.')
 	private static async getRenderedApp(waitFor: WaitForFn): Promise<App> {
 		await waitFor(() => this.findBestRenderedPanel() !== null, 'Expected app-test-panel to be rendered before scenario actions')
 		const panel = this.findBestRenderedPanel()
@@ -132,7 +200,7 @@ export class AppTest extends LitElement {
 		return panels.find((element) => element.isConnected) ?? null
 	}
 
-	@Spec('Installs a minimal AudioContext stub so behavioral UI tests never depend on real device audio.')
+	@Spec('Installs a minimal AudioContext stub so behavioral keyboard tests never depend on real device audio.')
 	private static installAudioContextStub() {
 		const maybeGlobal = globalThis as Record<string, unknown>
 		const audioContextConstructor = function AudioContextStub() {
@@ -140,7 +208,9 @@ export class AppTest extends LitElement {
 			let contextState: 'running' | 'suspended' | 'closed' = 'suspended'
 			return {
 				currentTime: 0,
-				state: contextState,
+				get state() {
+					return contextState
+				},
 				destination,
 				resume: async () => {
 					contextState = 'running'
@@ -186,14 +256,19 @@ export class AppTest extends LitElement {
 		maybeGlobal['webkitAudioContext'] = audioContextConstructor
 	}
 
-	@Spec('Clicks a button inside app-root by a stable id and waits for Lit to settle.')
-	private static async clickButtonById(app: App, buttonId: string) {
-		const button = app.shadowRoot?.querySelector<HTMLButtonElement>(`#${buttonId}`)
-		if (!button) {
-			throw new Error(`Button not found: ${buttonId}`)
+	@Spec('Dispatches a browser keyboard event so the mounted app receives a visible keyboard interaction.')
+	private static dispatchKeyboardEvent(type: 'keydown' | 'keyup', key: string) {
+		window.dispatchEvent(new KeyboardEvent(type, { key, bubbles: true, cancelable: true }))
+	}
+
+	@Spec('Toggles the visible monophonic switch using only the rendered UI control.')
+	private static toggleMonophonicSwitch(app: App, checked: boolean) {
+		const input = app.shadowRoot?.querySelector<HTMLInputElement>('#monophonic-toggle')
+		if (!input) {
+			throw new Error('Monophonic toggle not found')
 		}
-		button.click()
-		await app.updateComplete
+		input.checked = checked
+		input.dispatchEvent(new Event('change', { bubbles: true }))
 	}
 
 	@Spec('Reads visible text content from a stable element id inside app-root.')
@@ -203,14 +278,5 @@ export class AppTest extends LitElement {
 			throw new Error(`Element not found: ${elementId}`)
 		}
 		return element.textContent?.trim() ?? ''
-	}
-
-	@Spec('Returns whether a button is currently disabled in the rendered App UI.')
-	private static isButtonDisabled(app: App, buttonId: string): boolean {
-		const button = app.shadowRoot?.querySelector<HTMLButtonElement>(`#${buttonId}`)
-		if (!button) {
-			throw new Error(`Button not found: ${buttonId}`)
-		}
-		return button.disabled
 	}
 }

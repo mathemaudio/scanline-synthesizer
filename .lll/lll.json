@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "platform": "Evidype",
+  "projectType": "web",
+  "templateSource": "bundled:templates/client-server-lllts",
+  "createdAt": "2026-06-12T14:51:51.379Z",
+  "serverName": "scanline-synthesizer-server",
+  "clientPort": 47031,
+  "serverPort": 47032,
+  "tunnelPort": 47033,
+  "initialPrompt": "",
+  "initialComposerAttachments": [],
+  "promptProgressState": "not_started"
+}

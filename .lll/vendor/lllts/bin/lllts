@@ -1,0 +1,34 @@
+#!/usr/bin/env node
+
+const fs = require('fs')
+const path = require('path')
+const { spawn } = require('child_process')
+
+const scriptCandidates = [
+	path.join(__dirname, '..', 'dist', 'LLLTS.bundle.cjs'),
+	path.join(__dirname, '..', 'dist-many', 'LLLTS.lll.js')
+]
+const scriptPath = scriptCandidates.find((candidate) => fs.existsSync(candidate))
+const args = process.argv.slice(2)
+
+if (!scriptPath) {
+	console.error(
+		`evidyts: expected compiled entry at one of:\n${scriptCandidates.map((candidate) => `  - ${candidate}`).join('\n')}\n` +
+		'Run `pnpm run build` to generate the compiler before using this command.'
+	)
+	process.exit(1)
+}
+
+const child = spawn('node', [scriptPath, ...args], {
+	stdio: 'inherit',
+	cwd: process.cwd()
+})
+
+child.on('error', (err) => {
+	console.error(`evidyts: failed to start ${scriptPath}: ${err.message}`)
+	process.exit(1)
+})
+
+child.on('exit', (code) => {
+	process.exit(code || 0)
+})

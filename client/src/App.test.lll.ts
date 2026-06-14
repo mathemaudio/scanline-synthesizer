@@ -6,8 +6,8 @@ import { App } from './App.lll'
 export class AppTest {
 	testType = 'behavioral'
 
-	@Scenario('polyphonic mode shows two sounding voices for Q then W!')
-	static async showsPolyphonicVoiceCountForTwoHeldKeys(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ voiceMode: string, soundingVoices: string, activeKey: string }> {
+	@Scenario('monophonic mode is on by default and still tracks the newest held key')
+	static async showsMonophonicDefaultForTwoHeldKeys(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ voiceMode: string, soundingVoices: string, activeKey: string }> {
 		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
 		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
 		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
@@ -19,14 +19,16 @@ export class AppTest {
 			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', bubbles: true, cancelable: true }))
 			await app.updateComplete
 
-			await waitFor(() => this.readText(app, '#sounding-voices-value') === '2', 'Expected two sounding voices after holding Q and W in polyphonic mode')
+			await waitFor(() => this.readText(app, '#sounding-voices-value') === '1', 'Expected one sounding voice after holding Q and W in default monophonic mode')
 			const voiceMode = this.readText(app, '#voice-mode-value')
 			const soundingVoices = this.readText(app, '#sounding-voices-value')
 			const activeKey = this.readText(app, '#active-key-value')
+			const playbackMode = this.readText(app, '#playback-mode-value')
 
-			assert(voiceMode === 'Polyphonic', 'Expected the app to remain in polyphonic mode by default')
-			assert(soundingVoices === '2', 'Expected two sounding voices to be visible')
+			assert(voiceMode === 'Monophonic', 'Expected the app to start in monophonic mode by default')
+			assert(soundingVoices === '1', 'Expected only one sounding voice to be visible in default monophonic mode')
 			assert(activeKey === 'W', 'Expected the newest held key to become active')
+			assert(playbackMode === 'Cutoff', 'Expected cutoff playback mode to be selected by default')
 			return { voiceMode, soundingVoices, activeKey }
 		} finally {
 			window.dispatchEvent(new KeyboardEvent('keyup', { key: 'q', bubbles: true, cancelable: true }))
@@ -39,8 +41,8 @@ export class AppTest {
 		}
 	}
 
-	@Scenario('switching monophonic mode collapses held keys to one sounding voice')
-	static async collapsesHeldKeysWhenMonophonicModeIsEnabled(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ toggleValue: string, voiceMode: string, soundingVoices: string, noteState: string }> {
+	@Scenario('monophonic mode and portamento are on by default')
+	static async showsMonophonicAndPortamentoDefaults(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ toggleValue: string, voiceMode: string, soundingVoices: string, noteState: string, portamentoValue: string }> {
 		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
 		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
 		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
@@ -50,23 +52,21 @@ export class AppTest {
 			await this.prepareMountedApp(app, waitFor)
 			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', bubbles: true, cancelable: true }))
 			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', bubbles: true, cancelable: true }))
-			const toggle = app.shadowRoot?.querySelector<HTMLInputElement>('#monophonic-toggle')
-			assert(toggle !== null && toggle !== undefined, 'Expected monophonic toggle to exist')
-			toggle.checked = true
-			toggle.dispatchEvent(new Event('change', { bubbles: true }))
 			await app.updateComplete
 
-			await waitFor(() => this.readText(app, '#sounding-voices-value') === '1', 'Expected monophonic mode to collapse visible sounding voices to one')
+			await waitFor(() => this.readText(app, '#sounding-voices-value') === '1', 'Expected monophonic mode to be active by default and keep one visible sounding voice')
 			const toggleValue = this.readText(app, '#monophonic-toggle-value')
 			const voiceMode = this.readText(app, '#voice-mode-value')
 			const soundingVoices = this.readText(app, '#sounding-voices-value')
 			const noteState = this.readText(app, '#note-state-value')
+			const portamentoValue = this.readText(app, '#portamento-value')
 
 			assert(toggleValue === 'On', 'Expected the visible monophonic toggle label to turn On')
 			assert(voiceMode === 'Monophonic', 'Expected voice mode card to show Monophonic')
 			assert(soundingVoices === '1', 'Expected only one sounding voice in monophonic mode with overlapping keys held')
 			assert(noteState === 'Playing', 'Expected note state to remain visibly Playing while a note is sounding')
-			return { toggleValue, voiceMode, soundingVoices, noteState }
+			assert(portamentoValue === '50 ms', 'Expected the monophonic card to show the new 50 ms default portamento value')
+			return { toggleValue, voiceMode, soundingVoices, noteState, portamentoValue }
 		} finally {
 			window.dispatchEvent(new KeyboardEvent('keyup', { key: 'q', bubbles: true, cancelable: true }))
 			window.dispatchEvent(new KeyboardEvent('keyup', { key: 'w', bubbles: true, cancelable: true }))
@@ -78,8 +78,198 @@ export class AppTest {
 		}
 	}
 
+	@Scenario('adjusting monophonic portamento updates the visible slider value')
+	static async updatesMonophonicPortamentoValue(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ portamentoValue: string, sliderValue: string }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
+		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
+			; (globalThis as Record<string, unknown>)['AudioContext'] = this.createBehavioralAudioContextConstructor()
+		try {
+			const app = await subjectFactory()
+			await this.prepareMountedApp(app, waitFor)
+			const portamentoSlider = app.shadowRoot?.querySelector<HTMLInputElement>('#portamento-slider')
+			assert(portamentoSlider !== null && portamentoSlider !== undefined, 'Expected portamento slider to exist in the monophonic card')
+			portamentoSlider.value = '640'
+			portamentoSlider.dispatchEvent(new Event('input', { bubbles: true }))
+			await app.updateComplete
+			await waitFor(() => this.readText(app, '#portamento-value') === '640 ms', 'Expected the visible portamento value to update after moving the slider')
+
+			const portamentoValue = this.readText(app, '#portamento-value')
+			const sliderValue = this.readTextFromValueContainer(app, '#portamento-slider')
+
+			assert(portamentoValue === '640 ms', 'Expected the monophonic card to show the updated portamento milliseconds')
+			assert(sliderValue === '640', 'Expected the portamento slider input value to stay in sync with the visible label')
+			return { portamentoValue, sliderValue }
+		} finally {
+			if (originalAudioContext === undefined) {
+				delete (globalThis as Record<string, unknown>)['AudioContext']
+			} else {
+				(globalThis as Record<string, unknown>)['AudioContext'] = originalAudioContext
+			}
+		}
+	}
+
+	@Scenario('switching playback mode shows cutoff settings in the right-side panel')
+	static async showsCutoffPlaybackSettingsPanel(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ playbackMode: string, modeCopy: string, summary: string, resonanceValue: string }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
+		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
+			; (globalThis as Record<string, unknown>)['AudioContext'] = this.createBehavioralAudioContextConstructor()
+		try {
+			const app = await subjectFactory()
+			await this.prepareMountedApp(app, waitFor)
+			const cutoffRadio = app.shadowRoot?.querySelector<HTMLInputElement>('#playback-mode-cutoff')
+			assert(cutoffRadio !== null && cutoffRadio !== undefined, 'Expected cutoff playback radio button to exist')
+			cutoffRadio.checked = true
+			cutoffRadio.dispatchEvent(new Event('change', { bubbles: true }))
+			await app.updateComplete
+			await waitFor(() => this.readText(app, '#playback-mode-value') === 'Cutoff', 'Expected the right-side playback settings panel to show the Cutoff label')
+
+			const playbackMode = this.readText(app, '#playback-mode-value')
+			const modeCopy = this.readText(app, '#playback-settings-mode-copy')
+			const summary = this.readText(app, '#filter-envelope-summary')
+			const resonanceValue = this.readTextFromValueContainer(app, '#filter-resonance-slider')
+
+			assert(playbackMode === 'Cutoff', 'Expected the playback settings panel label to switch to Cutoff')
+			assert(modeCopy.includes('Filter ADSR'), 'Expected the cutoff panel copy to mention filter ADSR shaping')
+			assert(summary.includes('725 ms D') && summary.includes('15% S'), 'Expected the filter envelope summary to show the default cutoff settings')
+			assert(resonanceValue === '13', 'Expected the resonance slider to start from the default value of 13')
+			return { playbackMode, modeCopy, summary, resonanceValue }
+		} finally {
+			if (originalAudioContext === undefined) {
+				delete (globalThis as Record<string, unknown>)['AudioContext']
+			} else {
+				(globalThis as Record<string, unknown>)['AudioContext'] = originalAudioContext
+			}
+		}
+	}
+
+	@Scenario('adjusting cutoff playback settings updates the visible summary values')
+	static async updatesCutoffPlaybackSummaryValues(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ envelopeSummary: string, cutoffSummary: string }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
+		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
+			; (globalThis as Record<string, unknown>)['AudioContext'] = this.createBehavioralAudioContextConstructor()
+		try {
+			const app = await subjectFactory()
+			await this.prepareMountedApp(app, waitFor)
+			const cutoffRadio = app.shadowRoot?.querySelector<HTMLInputElement>('#playback-mode-cutoff')
+			assert(cutoffRadio !== null && cutoffRadio !== undefined, 'Expected cutoff playback radio button to exist')
+			cutoffRadio.checked = true
+			cutoffRadio.dispatchEvent(new Event('change', { bubbles: true }))
+			await app.updateComplete
+			await waitFor(() => this.readText(app, '#playback-mode-value') === 'Cutoff', 'Expected cutoff settings panel to render before changing a slider')
+
+			const attackSlider = app.shadowRoot?.querySelector<HTMLInputElement>('#filter-attack-slider')
+			const peakCutoffSlider = app.shadowRoot?.querySelector<HTMLInputElement>('#filter-peak-cutoff-slider')
+			assert(attackSlider !== null && attackSlider !== undefined, 'Expected attack slider to exist in cutoff mode')
+			assert(peakCutoffSlider !== null && peakCutoffSlider !== undefined, 'Expected peak cutoff slider to exist in cutoff mode')
+			attackSlider.value = '125'
+			attackSlider.dispatchEvent(new Event('input', { bubbles: true }))
+			peakCutoffSlider.value = '4200'
+			peakCutoffSlider.dispatchEvent(new Event('input', { bubbles: true }))
+			await app.updateComplete
+
+			const envelopeSummary = this.readText(app, '#filter-envelope-summary')
+			const cutoffSummary = this.readText(app, '#filter-cutoff-summary')
+			assert(envelopeSummary.includes('125 ms A'), 'Expected changing the attack slider to update the visible envelope summary')
+			assert(cutoffSummary.includes('4200 Hz peak'), 'Expected changing the peak cutoff slider to update the visible cutoff summary')
+			return { envelopeSummary, cutoffSummary }
+		} finally {
+			if (originalAudioContext === undefined) {
+				delete (globalThis as Record<string, unknown>)['AudioContext']
+			} else {
+				(globalThis as Record<string, unknown>)['AudioContext'] = originalAudioContext
+			}
+		}
+	}
+
+	@Scenario('switching playback modes keeps keyboard play active while the panel changes')
+	static async keepsKeyboardPlayableWhileSwitchingPlaybackModes(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ playbackMode: string, noteState: string, activeKey: string, panelCopy: string }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
+		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
+			; (globalThis as Record<string, unknown>)['AudioContext'] = this.createBehavioralAudioContextConstructor()
+		try {
+			const app = await subjectFactory()
+			await this.prepareMountedApp(app, waitFor)
+			const pluckRadio = app.shadowRoot?.querySelector<HTMLInputElement>('#playback-mode-pluck')
+			assert(pluckRadio !== null && pluckRadio !== undefined, 'Expected pluck playback radio button to exist')
+			pluckRadio.checked = true
+			pluckRadio.dispatchEvent(new Event('change', { bubbles: true }))
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', bubbles: true, cancelable: true }))
+			await app.updateComplete
+
+			await waitFor(() => this.readText(app, '#playback-mode-value') === 'Pluck', 'Expected the playback settings panel to switch to Pluck')
+			await waitFor(() => this.readText(app, '#active-key-value') === 'Q', 'Expected keyboard play to remain active after switching playback mode')
+			const playbackMode = this.readText(app, '#playback-mode-value')
+			const noteState = this.readText(app, '#note-state-value')
+			const activeKey = this.readText(app, '#active-key-value')
+			const panelCopy = this.readText(app, '#playback-settings-mode-copy')
+
+			assert(playbackMode === 'Pluck', 'Expected playback mode label to show Pluck after selecting it')
+			assert(noteState === 'Playing', 'Expected note state to remain visibly Playing while the keyboard is used after a mode switch')
+			assert(activeKey === 'Q', 'Expected the active key to still reflect keyboard play after switching playback mode')
+			assert(panelCopy.includes('bright transient'), 'Expected the pluck panel copy to describe the string-like pluck behavior')
+			return { playbackMode, noteState, activeKey, panelCopy }
+		} finally {
+			window.dispatchEvent(new KeyboardEvent('keyup', { key: 'q', bubbles: true, cancelable: true }))
+			if (originalAudioContext === undefined) {
+				delete (globalThis as Record<string, unknown>)['AudioContext']
+			} else {
+				(globalThis as Record<string, unknown>)['AudioContext'] = originalAudioContext
+			}
+		}
+	}
+
+	@Scenario('effects settings stay visible below playback settings for every playback mode')
+	static async showsAlwaysOnEffectsPanelAcrossPlaybackModes(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ rawLabel: string, cutoffLabel: string, pluckLabel: string, chorusLabel: string }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
+		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
+			; (globalThis as Record<string, unknown>)['AudioContext'] = this.createBehavioralAudioContextConstructor()
+		try {
+			const app = await subjectFactory()
+			await this.prepareMountedApp(app, waitFor)
+			const rawRadio = app.shadowRoot?.querySelector<HTMLInputElement>('#playback-mode-raw')
+			const cutoffRadio = app.shadowRoot?.querySelector<HTMLInputElement>('#playback-mode-cutoff')
+			const pluckRadio = app.shadowRoot?.querySelector<HTMLInputElement>('#playback-mode-pluck')
+			assert(rawRadio !== null && rawRadio !== undefined, 'Expected raw playback radio button to exist')
+			assert(cutoffRadio !== null && cutoffRadio !== undefined, 'Expected cutoff playback radio button to exist')
+			assert(pluckRadio !== null && pluckRadio !== undefined, 'Expected pluck playback radio button to exist')
+
+			rawRadio.checked = true
+			rawRadio.dispatchEvent(new Event('change', { bubbles: true }))
+			await waitFor(() => this.readText(app, '#playback-mode-value') === 'Raw', 'Expected playback settings label to switch to Raw')
+			const rawLabel = this.readText(app, '#effects-panel-value')
+
+			cutoffRadio.checked = true
+			cutoffRadio.dispatchEvent(new Event('change', { bubbles: true }))
+			await waitFor(() => this.readText(app, '#playback-mode-value') === 'Cutoff', 'Expected playback settings label to switch to Cutoff')
+			const cutoffLabel = this.readText(app, '#effects-panel-value')
+
+			pluckRadio.checked = true
+			pluckRadio.dispatchEvent(new Event('change', { bubbles: true }))
+			await waitFor(() => this.readText(app, '#playback-mode-value') === 'Pluck', 'Expected playback settings label to switch to Pluck')
+			const pluckLabel = this.readText(app, '#effects-panel-value')
+			const chorusLabel = app.shadowRoot?.querySelector('.settings-grid .setting-control .status-label')?.textContent?.trim() ?? ''
+
+			assert(rawLabel === 'Always on', 'Expected effects panel to stay visible in raw mode')
+			assert(cutoffLabel === 'Always on', 'Expected effects panel to stay visible in cutoff mode')
+			assert(pluckLabel === 'Always on', 'Expected effects panel to stay visible in pluck mode')
+			assert(chorusLabel === 'Chorus mix', 'Expected effects controls to remain visible below playback settings across modes')
+			return { rawLabel, cutoffLabel, pluckLabel, chorusLabel }
+		} finally {
+			if (originalAudioContext === undefined) {
+				delete (globalThis as Record<string, unknown>)['AudioContext']
+			} else {
+				(globalThis as Record<string, unknown>)['AudioContext'] = originalAudioContext
+			}
+		}
+	}
+
 	@Scenario('uploading an image activates an image row waveform and exposes the row selector')
-	static async showsImageRowWaveformControlsAfterUpload(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ uploadedImageName: string, waveform: string, rowValue: string, waveformDetail: string }> {
+	static async showsImageRowWaveformControlsAfterUpload(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ uploadedImageName: string, waveform: string, rowValue: string }> {
 		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
 		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
 		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
@@ -106,17 +296,138 @@ export class AppTest {
 			uploadInput.dispatchEvent(new Event('change', { bubbles: true }))
 			await app.updateComplete
 
-			await waitFor(() => this.readText(app, '#waveform-value').startsWith('Image row'), 'Expected an uploaded image row waveform to become active')
+			await waitFor(() => this.readText(app, '#waveform-value').startsWith('Row '), 'Expected an uploaded image row waveform to become active')
 			const uploadedImageName = this.readText(app, '#uploaded-image-name')
 			const waveform = this.readText(app, '#waveform-value')
 			const rowValue = this.readText(app, '#waveform-row-value')
-			const waveformDetail = this.readText(app, '#waveform-detail-text')
 
 			assert(uploadedImageName === 'panel-reference.svg', 'Expected uploaded image file name to be shown')
-			assert(waveform.startsWith('Image row'), 'Expected waveform card to switch from Sine to an uploaded image row')
+			assert(waveform.startsWith('Row '), 'Expected waveform card to switch from Sine to a compact uploaded row label')
 			assert(rowValue.includes('of 2'), 'Expected row selector to reveal two loaded rows from the canvas image')
-			assert(waveformDetail.includes('image loaded'), 'Expected waveform detail text to describe the loaded image dimensions')
-			return { uploadedImageName, waveform, rowValue, waveformDetail }
+			return { uploadedImageName, waveform, rowValue }
+		} finally {
+			this.restoreCanvasTestDouble()
+			if (originalAudioContext === undefined) {
+				delete (globalThis as Record<string, unknown>)['AudioContext']
+			} else {
+				(globalThis as Record<string, unknown>)['AudioContext'] = originalAudioContext
+			}
+			URL.createObjectURL = originalCreateObjectUrl
+			URL.revokeObjectURL = originalRevokeObjectUrl
+			if (originalImage === undefined) {
+				delete (globalThis as Record<string, unknown>)['Image']
+			} else {
+				(globalThis as Record<string, unknown>)['Image'] = originalImage
+			}
+			if (originalHTMLElement === undefined) {
+				delete (globalThis as Record<string, unknown>)['HTMLElement']
+			} else {
+				(globalThis as Record<string, unknown>)['HTMLElement'] = originalHTMLElement
+			}
+		}
+	}
+
+	@Scenario('loop crossfade defaults to ten percent and the waveform preview shows three cycles')
+	static async showsLoopCrossfadeControlAndThreeCyclePreview(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ crossfadeValue: string, previewMeta: string, canvasWidth: number, canvasHeight: number }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
+		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
+		const originalCreateObjectUrl = URL.createObjectURL
+		const originalRevokeObjectUrl = URL.revokeObjectURL
+		const originalImage = (globalThis as Record<string, unknown>)['Image']
+		const originalHTMLElement = (globalThis as Record<string, unknown>)['HTMLElement']
+			; (globalThis as Record<string, unknown>)['AudioContext'] = this.createBehavioralAudioContextConstructor()
+		URL.createObjectURL = ((_file: Blob | MediaSource) => this.behavioralPreviewImageUrl) as typeof URL.createObjectURL
+		URL.revokeObjectURL = (() => undefined) as typeof URL.revokeObjectURL
+			; (globalThis as Record<string, unknown>)['Image'] = this.createBehavioralImageConstructor()
+			; (globalThis as Record<string, unknown>)['HTMLElement'] = this.createBehavioralHTMLElementConstructor()
+		try {
+			const app = await subjectFactory()
+			await this.prepareMountedApp(app, waitFor)
+			this.installCanvasTestDouble()
+			const uploadInput = app.shadowRoot?.querySelector<HTMLInputElement>('#image-upload-input')
+			assert(uploadInput !== null && uploadInput !== undefined, 'Expected image upload input to exist')
+			Object.defineProperty(uploadInput, 'files', {
+				configurable: true,
+				value: [this.createBehavioralImageFile('cycles.svg')]
+			})
+			uploadInput.dispatchEvent(new Event('change', { bubbles: true }))
+			await app.updateComplete
+			await waitFor(() => this.readText(app, '#waveform-value').startsWith('Row '), 'Expected an uploaded image row waveform to become active before inspecting the new preview controls')
+			await waitFor(() => this.readText(app, '#waveform-crossfade-value').includes('10%'), 'Expected the new loop crossfade control to default to ten percent')
+
+			const crossfadeValue = this.readText(app, '#waveform-crossfade-value')
+			const previewMeta = this.readTextFromShadowHost(app, 'image-waveform-preview', '#waveform-preview-meta')
+			const previewCanvas = app.shadowRoot?.querySelector('image-waveform-preview')?.shadowRoot?.querySelector<HTMLCanvasElement>('#waveform-preview-canvas')
+			assert(previewCanvas !== null && previewCanvas !== undefined, 'Expected the three-cycle waveform preview canvas to render after upload')
+			assert(crossfadeValue === '10% seam overlap', 'Expected the loop crossfade value label to default to ten percent')
+			assert(previewMeta.includes('10% loop crossfade'), 'Expected the preview metadata to mention the default loop crossfade amount')
+			assert(previewCanvas.width === 960, 'Expected the selected waveform preview to widen for three cycles')
+			assert(previewCanvas.height === 146, 'Expected the selected waveform preview to become taller for the new three-cycle display')
+			return { crossfadeValue, previewMeta, canvasWidth: previewCanvas.width, canvasHeight: previewCanvas.height }
+		} finally {
+			this.restoreCanvasTestDouble()
+			if (originalAudioContext === undefined) {
+				delete (globalThis as Record<string, unknown>)['AudioContext']
+			} else {
+				(globalThis as Record<string, unknown>)['AudioContext'] = originalAudioContext
+			}
+			URL.createObjectURL = originalCreateObjectUrl
+			URL.revokeObjectURL = originalRevokeObjectUrl
+			if (originalImage === undefined) {
+				delete (globalThis as Record<string, unknown>)['Image']
+			} else {
+				(globalThis as Record<string, unknown>)['Image'] = originalImage
+			}
+			if (originalHTMLElement === undefined) {
+				delete (globalThis as Record<string, unknown>)['HTMLElement']
+			} else {
+				(globalThis as Record<string, unknown>)['HTMLElement'] = originalHTMLElement
+			}
+		}
+	}
+
+	@Scenario('moving the loop crossfade slider updates the visible preview seam amount')
+	static async updatesLoopCrossfadePreview(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ crossfadeValue: string, previewMeta: string }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
+		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
+		const originalCreateObjectUrl = URL.createObjectURL
+		const originalRevokeObjectUrl = URL.revokeObjectURL
+		const originalImage = (globalThis as Record<string, unknown>)['Image']
+		const originalHTMLElement = (globalThis as Record<string, unknown>)['HTMLElement']
+			; (globalThis as Record<string, unknown>)['AudioContext'] = this.createBehavioralAudioContextConstructor()
+		URL.createObjectURL = ((_file: Blob | MediaSource) => this.behavioralPreviewImageUrl) as typeof URL.createObjectURL
+		URL.revokeObjectURL = (() => undefined) as typeof URL.revokeObjectURL
+			; (globalThis as Record<string, unknown>)['Image'] = this.createBehavioralImageConstructor()
+			; (globalThis as Record<string, unknown>)['HTMLElement'] = this.createBehavioralHTMLElementConstructor()
+		try {
+			const app = await subjectFactory()
+			await this.prepareMountedApp(app, waitFor)
+			this.installCanvasTestDouble()
+			const uploadInput = app.shadowRoot?.querySelector<HTMLInputElement>('#image-upload-input')
+			assert(uploadInput !== null && uploadInput !== undefined, 'Expected image upload input to exist')
+			Object.defineProperty(uploadInput, 'files', {
+				configurable: true,
+				value: [this.createBehavioralImageFile('crossfade.svg')]
+			})
+			uploadInput.dispatchEvent(new Event('change', { bubbles: true }))
+			await app.updateComplete
+			await waitFor(() => this.readText(app, '#waveform-value').startsWith('Row '), 'Expected an uploaded image row waveform to become active before moving the loop crossfade slider')
+			await waitFor(() => this.readText(app, '#waveform-crossfade-value').includes('10%'), 'Expected the loop crossfade control to render at the new default before adjusting it')
+
+			const crossfadeSlider = app.shadowRoot?.querySelector<HTMLInputElement>('#waveform-crossfade-slider')
+			assert(crossfadeSlider !== null && crossfadeSlider !== undefined, 'Expected loop crossfade slider to exist')
+			crossfadeSlider.value = '50'
+			crossfadeSlider.dispatchEvent(new Event('input', { bubbles: true }))
+			await app.updateComplete
+			await waitFor(() => this.readText(app, '#waveform-crossfade-value') === '50% seam overlap', 'Expected the loop crossfade value label to update when the slider moves')
+
+			const crossfadeValue = this.readText(app, '#waveform-crossfade-value')
+			const previewMeta = this.readTextFromShadowHost(app, 'image-waveform-preview', '#waveform-preview-meta')
+			assert(crossfadeValue === '50% seam overlap', 'Expected the loop crossfade value to reflect the slider movement')
+			assert(previewMeta.includes('50% loop crossfade'), 'Expected the selected waveform preview metadata to follow the loop crossfade slider')
+			return { crossfadeValue, previewMeta }
 		} finally {
 			this.restoreCanvasTestDouble()
 			if (originalAudioContext === undefined) {
@@ -140,7 +451,7 @@ export class AppTest {
 	}
 
 	@Scenario('moving the row selector changes the visible active image row while keyboard play still works')
-	static async changesSelectedImageRowAndKeepsKeyboardPlayable(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ waveform: string, rowValue: string, previewMeta: string, activeKey: string, noteState: string }> {
+	static async changesSelectedImageRowAndKeepsKeyboardPlayable(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ waveform: string, rowValue: string, previewMeta: string, selectedRowLineTop: string, activeKey: string, noteState: string }> {
 		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
 		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
 		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
@@ -179,17 +490,19 @@ export class AppTest {
 			const rowValue = this.readText(app, '#waveform-row-value')
 			const previewMeta = this.readTextFromShadowHost(app, 'image-waveform-preview', '#waveform-preview-meta')
 			const previewCanvas = app.shadowRoot?.querySelector('image-waveform-preview')?.shadowRoot?.querySelector<HTMLCanvasElement>('#waveform-preview-canvas')
+			const selectedRowLineTop = this.readStyleFromShadowHost(app, 'uploaded-image-preview', '#selected-row-line', 'top')
 			const activeKey = this.readText(app, '#active-key-value')
 			const noteState = this.readText(app, '#note-state-value')
 
-			assert(waveform === 'Image row 2', 'Expected moving the slider to activate the second image row')
+			assert(waveform === 'Row 2', 'Expected moving the slider to activate the second image row with the compact label')
 			assert(rowValue === 'Row 2 of 2', 'Expected row status text to follow the slider')
 			assert(previewMeta.includes('Row 2 of 2'), 'Expected the visible waveform preview metadata to follow the selected row')
 			assert(previewCanvas !== null && previewCanvas !== undefined, 'Expected the waveform preview canvas to render below the uploaded image')
 			assert(previewCanvas.width > 0 && previewCanvas.height > 0, 'Expected the waveform preview canvas to be sized for drawing')
+			assert(selectedRowLineTop === '75%', 'Expected the selected-row line to move to the center of the second row out of two')
 			assert(activeKey === 'Q', 'Expected keyboard control to remain playable after selecting a new image row')
 			assert(noteState === 'Playing', 'Expected a played key to keep the synth visibly playing after image upload')
-			return { waveform, rowValue, previewMeta, activeKey, noteState }
+			return { waveform, rowValue, previewMeta, selectedRowLineTop, activeKey, noteState }
 		} finally {
 			window.dispatchEvent(new KeyboardEvent('keyup', { key: 'q', bubbles: true, cancelable: true }))
 			this.restoreCanvasTestDouble()
@@ -209,6 +522,82 @@ export class AppTest {
 				delete (globalThis as Record<string, unknown>)['HTMLElement']
 			} else {
 				(globalThis as Record<string, unknown>)['HTMLElement'] = originalHTMLElement
+			}
+		}
+	}
+
+	@Scenario('pitch card shows only frequency because active note is already listed separately')
+	static async showsPitchCardAsFrequencyOnly(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ activeNote: string, pitch: string }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
+		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
+			; (globalThis as Record<string, unknown>)['AudioContext'] = this.createBehavioralAudioContextConstructor()
+		try {
+			const app = await subjectFactory()
+			await this.prepareMountedApp(app, waitFor)
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', bubbles: true, cancelable: true }))
+			await app.updateComplete
+			await waitFor(() => this.readText(app, '#pitch-value') === '65.41 Hz', 'Expected the pitch card to show only the played frequency for Q at the default octave')
+
+			const activeNote = this.readText(app, '#active-note-value')
+			const pitch = this.readText(app, '#pitch-value')
+			assert(activeNote === 'C2', 'Expected the active note card to keep showing the note label separately')
+			assert(pitch === '65.41 Hz', 'Expected the pitch card to omit duplicated note text and show only frequency')
+			return { activeNote, pitch }
+		} finally {
+			window.dispatchEvent(new KeyboardEvent('keyup', { key: 'q', bubbles: true, cancelable: true }))
+			if (originalAudioContext === undefined) {
+				delete (globalThis as Record<string, unknown>)['AudioContext']
+			} else {
+				(globalThis as Record<string, unknown>)['AudioContext'] = originalAudioContext
+			}
+		}
+	}
+
+	@Scenario('octave corner buttons shift the QWERTY guide and active played note up and down')
+	static async shiftsKeyboardOctaveFromCornerButtons(subjectFactory: SubjectFactory<App>, scenario?: ScenarioParameter): Promise<{ loweredGuide: string, raisedGuide: string, loweredNote: string, raisedNote: string }> {
+		const assert: AssertFn = scenario?.assert ?? this.failFastAssert
+		const waitFor: WaitForFn = scenario?.waitFor ?? this.failFastWaitFor
+		const originalAudioContext = (globalThis as Record<string, unknown>)['AudioContext']
+			; (globalThis as Record<string, unknown>)['AudioContext'] = this.createBehavioralAudioContextConstructor()
+		try {
+			const app = await subjectFactory()
+			await this.prepareMountedApp(app, waitFor)
+			const octaveDownButton = app.shadowRoot?.querySelector<HTMLButtonElement>('#keyboard-octave-down-button')
+			const octaveUpButton = app.shadowRoot?.querySelector<HTMLButtonElement>('#keyboard-octave-up-button')
+			assert(octaveDownButton !== null && octaveDownButton !== undefined, 'Expected the lower-left octave down button to exist')
+			assert(octaveUpButton !== null && octaveUpButton !== undefined, 'Expected the lower-left octave up button to exist')
+
+			octaveDownButton.click()
+			await app.updateComplete
+			await waitFor(() => this.readText(app, '#keyboard-row-top-value').includes('C1 to E2'), 'Expected the upper keyboard guide to move down one octave after clicking the down button')
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', bubbles: true, cancelable: true }))
+			await app.updateComplete
+			await waitFor(() => this.readText(app, '#active-note-value') === 'C1', 'Expected Q to play C1 after lowering the keyboard octave')
+			const loweredGuide = this.readText(app, '#keyboard-row-top-value')
+			const loweredNote = this.readText(app, '#active-note-value')
+
+			window.dispatchEvent(new KeyboardEvent('keyup', { key: 'q', bubbles: true, cancelable: true }))
+			octaveUpButton.click()
+			await app.updateComplete
+			await waitFor(() => this.readText(app, '#keyboard-row-top-value').includes('C2 to E3'), 'Expected the upper keyboard guide to return to the new default octave after clicking the up button')
+			window.dispatchEvent(new KeyboardEvent('keydown', { key: 'q', bubbles: true, cancelable: true }))
+			await app.updateComplete
+			await waitFor(() => this.readText(app, '#active-note-value') === 'C2', 'Expected Q to play C2 again after raising the keyboard octave')
+			const raisedGuide = this.readText(app, '#keyboard-row-top-value')
+			const raisedNote = this.readText(app, '#active-note-value')
+
+			assert(loweredGuide.includes('C1 to E2'), 'Expected the visible upper-row guide to reflect the lowered octave range')
+			assert(raisedGuide.includes('C2 to E3'), 'Expected the visible upper-row guide to reflect the restored default octave range')
+			assert(loweredNote === 'C1', 'Expected the played Q note to follow the lowered octave mapping')
+			assert(raisedNote === 'C2', 'Expected the played Q note to follow the raised octave mapping')
+			return { loweredGuide, raisedGuide, loweredNote, raisedNote }
+		} finally {
+			window.dispatchEvent(new KeyboardEvent('keyup', { key: 'q', bubbles: true, cancelable: true }))
+			if (originalAudioContext === undefined) {
+				delete (globalThis as Record<string, unknown>)['AudioContext']
+			} else {
+				(globalThis as Record<string, unknown>)['AudioContext'] = originalAudioContext
 			}
 		}
 	}
@@ -255,6 +644,28 @@ export class AppTest {
 			throw new Error(`Nested shadow element not found: ${hostSelector} -> ${innerSelector}`)
 		}
 		return element.textContent?.trim() ?? ''
+	}
+
+	@Spec('Reads one input value from the app shadow DOM so behavioral scenarios can verify visible slider defaults.')
+	private static readTextFromValueContainer(app: App, selector: string): string {
+		const input = app.shadowRoot?.querySelector<HTMLInputElement>(selector)
+		if (input === null || input === undefined) {
+			throw new Error(`App input not found: ${selector}`)
+		}
+		return input.value
+	}
+
+	@Spec('Reads one inline style property from a nested shadow host element inside the app for visible behavioral UI checks.')
+	private static readStyleFromShadowHost(app: App, hostSelector: string, innerSelector: string, propertyName: 'top'): string {
+		const host = app.shadowRoot?.querySelector<HTMLElement>(hostSelector)
+		if (host === null || host === undefined) {
+			throw new Error(`App shadow host not found: ${hostSelector}`)
+		}
+		const element = host.shadowRoot?.querySelector<HTMLElement>(innerSelector)
+		if (element === null || element === undefined) {
+			throw new Error(`Nested shadow element not found: ${hostSelector} -> ${innerSelector}`)
+		}
+		return element.style[propertyName]
 	}
 
 	@Spec('Installs a tiny canvas test double that exposes deterministic image rows for behavioral upload scenarios.')
@@ -307,10 +718,69 @@ export class AppTest {
 			createPeriodicWave(): PeriodicWave {
 				return {} as PeriodicWave
 			}
+			createBiquadFilter(): BiquadFilterNode {
+				const frequency = {
+					value: 0,
+					cancelScheduledValues: () => { },
+					setValueAtTime(value: number) {
+						this.value = value
+						return this
+					},
+					linearRampToValueAtTime(value: number) {
+						this.value = value
+						return this
+					}
+				}
+				const quality = {
+					value: 0,
+					setValueAtTime(value: number) {
+						this.value = value
+						return this
+					}
+				}
+				return {
+					type: 'lowpass',
+					frequency: frequency as unknown as AudioParam,
+					Q: quality as unknown as AudioParam,
+					connect: () => { },
+					disconnect: () => { }
+				} as unknown as BiquadFilterNode
+			}
+			createDelay(): DelayNode {
+				const delayTime = {
+					value: 0,
+					cancelScheduledValues: () => { },
+					setValueAtTime(value: number) {
+						this.value = value
+						return this
+					},
+					linearRampToValueAtTime(value: number) {
+						this.value = value
+						return this
+					}
+				}
+				return {
+					delayTime: delayTime as unknown as AudioParam,
+					connect: () => { },
+					disconnect: () => { }
+				} as unknown as DelayNode
+			}
 			createOscillator(): OscillatorNode {
+				const frequency = {
+					value: 0,
+					cancelScheduledValues: () => { },
+					setValueAtTime(value: number) {
+						this.value = value
+						return this
+					},
+					linearRampToValueAtTime(value: number) {
+						this.value = value
+						return this
+					}
+				}
 				const oscillator = {
 					type: 'sine',
-					frequency: { value: 0 },
+					frequency: frequency,
 					onended: null as (() => void) | null,
 					connect: () => { },
 					disconnect: () => { },
@@ -328,12 +798,15 @@ export class AppTest {
 					cancelScheduledValues: () => { },
 					setValueAtTime(value: number) {
 						this.value = value
+						return this
 					},
 					linearRampToValueAtTime(value: number) {
 						this.value = value
+						return this
 					},
 					exponentialRampToValueAtTime(value: number) {
 						this.value = value
+						return this
 					}
 				}
 				return {

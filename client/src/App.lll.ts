@@ -1,11 +1,14 @@
 import { LitElement, css, html, type TemplateResult } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { Spec } from '@shared/lll.lll'
+import { ImageWaveformBank } from './ImageWaveformBank.lll'
+import { ImageWaveformRow } from './ImageWaveformRow.lll'
 import { KeyboardPitch } from './KeyboardPitch.lll'
 import { PrimitiveSynth } from './PrimitiveSynth.lll'
 import { QwertyKeyboard } from './QwertyKeyboard.lll'
+import './ImageWaveformPreview.lll'
 
-@Spec('Renders the Scanline Synth interface around a playable QWERTY keyboard with switchable mono and poly playback.')
+@Spec('Renders the Scanline Synth interface around a playable QWERTY keyboard with switchable mono and poly playback plus uploaded image row waveforms.')
 @customElement('app-root')
 export class App extends LitElement {
 	static styles = css`
@@ -37,7 +40,7 @@ export class App extends LitElement {
 		}
 
 		main {
-			width: min(1040px, 100%);
+			width: min(1240px, 100%);
 			display: grid;
 			gap: 24px;
 			padding: 28px;
@@ -63,6 +66,7 @@ export class App extends LitElement {
 		header,
 		.keyboard-guide,
 		.status-grid,
+		.status-upload-layout,
 		.mode-section {
 			display: grid;
 			gap: 14px;
@@ -141,7 +145,8 @@ export class App extends LitElement {
 
 		.guide-card,
 		.status-card,
-		.switch-card {
+		.switch-card,
+		.upload-card {
 			display: grid;
 			gap: 10px;
 			padding: 18px;
@@ -186,8 +191,13 @@ export class App extends LitElement {
 			line-height: 1.7;
 		}
 
+		.status-upload-layout {
+			grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr);
+			align-items: start;
+		}
+
 		.status-grid {
-			grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+			grid-template-columns: repeat(2, minmax(180px, 1fr));
 		}
 
 		.status-card {
@@ -197,6 +207,71 @@ export class App extends LitElement {
 		.status-value {
 			color: var(--display-green);
 			text-shadow: 0 0 10px rgba(184, 246, 169, 0.12);
+		}
+
+		.upload-card {
+			gap: 16px;
+		}
+
+		.upload-controls {
+			display: grid;
+			gap: 12px;
+		}
+
+		.row-slider {
+			width: 100%;
+			accent-color: #cf6f36;
+		}
+
+		.upload-button {
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			padding: 12px 16px;
+			border-radius: 12px;
+			border: 1px solid rgba(255, 225, 173, 0.2);
+			background: linear-gradient(180deg, rgba(207, 111, 54, 0.28), rgba(104, 53, 26, 0.95));
+			color: #f8e2b8;
+			font-family: 'Orbitron', 'Inter', sans-serif;
+			font-size: 0.86rem;
+			letter-spacing: 0.08em;
+			text-transform: uppercase;
+			cursor: pointer;
+			width: fit-content;
+		}
+
+		.upload-input {
+			display: none;
+		}
+
+		.upload-preview {
+			display: grid;
+			place-items: center;
+			min-height: 300px;
+			padding: 16px;
+			border-radius: 16px;
+			border: 1px dashed rgba(255, 225, 173, 0.2);
+			background: linear-gradient(180deg, rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.02));
+			overflow: hidden;
+		}
+
+		.upload-preview img {
+			max-width: 100%;
+			max-height: 340px;
+			object-fit: contain;
+			border-radius: 12px;
+			box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+		}
+
+		.upload-placeholder {
+			text-align: center;
+			color: rgba(244, 235, 212, 0.7);
+			line-height: 1.6;
+		}
+
+		.waveform-preview-panel {
+			display: grid;
+			gap: 10px;
 		}
 
 		.switch-card {
@@ -265,8 +340,18 @@ export class App extends LitElement {
 			min-height: 4.6em;
 		}
 
+		@media (max-width: 900px) {
+			.status-upload-layout {
+				grid-template-columns: 1fr;
+			}
+		}
+
 		@media (max-width: 760px) {
 			header {
+				grid-template-columns: 1fr;
+			}
+
+			.status-grid {
 				grid-template-columns: 1fr;
 			}
 
@@ -304,6 +389,27 @@ export class App extends LitElement {
 	@state()
 	private soundingVoiceCount: number = 0
 
+	@state()
+	private uploadedImageUrl: string | null = null
+
+	@state()
+	private uploadedImageName: string = 'No image selected'
+
+	@state()
+	private waveformLabel: string = 'Sine'
+
+	@state()
+	private waveformDetailText: string = 'No uploaded image row is active yet.'
+
+	@state()
+	private selectedRowIndex: number = 0
+
+	@state()
+	private availableRowCount: number = 0
+
+	private imageWaveformRows: ImageWaveformRow[] = []
+	private readonly imageWaveformBank = new ImageWaveformBank()
+
 	private readonly synth = new PrimitiveSynth({
 		monophonic: false,
 		onStateChange: (state) => this.onSynthStateChange(state)
@@ -329,11 +435,12 @@ export class App extends LitElement {
 		window.addEventListener('keyup', this.onWindowKeyUpListener)
 	}
 
-	@Spec('Disconnects global keyboard listeners and releases any sounding synth voices when the app unmounts.')
+	@Spec('Disconnects global keyboard listeners, releases any sounding synth voices, and cleans up uploaded preview resources when the app unmounts.')
 	disconnectedCallback() {
 		window.removeEventListener('keydown', this.onWindowKeyDownListener)
 		window.removeEventListener('keyup', this.onWindowKeyUpListener)
 		this.synth.releaseNote()
+		this.revokeUploadedImageUrl()
 		super.disconnectedCallback()
 	}
 
@@ -473,17 +580,93 @@ export class App extends LitElement {
 		return `${activePitch.frequencyHz.toFixed(2)} Hz · ${activePitch.noteLabel}`
 	}
 
-	@Spec('Renders the QWERTY keyboard guide, mono-poly switch, and visible synth status cards.')
+	@Spec('Updates the uploaded image preview and image-row waveform bank from one file selection so the synth can switch away from the sine oscillator.')
+	private async onImageSelection(event: Event) {
+		const input = event.currentTarget as HTMLInputElement | null
+		const file = input?.files?.[0] ?? null
+		if (file === null) {
+			return
+		}
+		this.revokeUploadedImageUrl()
+		this.uploadedImageUrl = URL.createObjectURL(file)
+		this.uploadedImageName = file.name
+		try {
+			const waveformBank = await this.imageWaveformBank.loadFromFile(file)
+			this.imageWaveformRows = waveformBank.rows
+			this.availableRowCount = waveformBank.rows.length
+			this.selectedRowIndex = this.chooseDefaultRowIndex(waveformBank.rows)
+			this.applySelectedWaveformRow()
+			this.waveformDetailText = `${waveformBank.width} × ${waveformBank.height} image loaded. Row ${this.selectedRowIndex + 1} is active for playback.`
+		} catch (_error) {
+			this.imageWaveformRows = []
+			this.availableRowCount = 0
+			this.selectedRowIndex = 0
+			this.synth.setWaveformSamples(null)
+			this.waveformLabel = 'Sine'
+			this.waveformDetailText = 'The selected image could not be decoded into waveform rows, so the synth stayed on the sine oscillator.'
+		}
+	}
+
+	@Spec('Selects a default uploaded row that is likely to sound distinct by preferring the brightest row in the image bank.')
+	private chooseDefaultRowIndex(rows: ImageWaveformRow[]): number {
+		let brightestRowIndex = 0
+		let brightestAverage = -1
+		for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+			const averageBrightness = rows[rowIndex]?.averageBrightness ?? -1
+			if (averageBrightness <= brightestAverage) {
+				continue
+			}
+			brightestAverage = averageBrightness
+			brightestRowIndex = rowIndex
+		}
+		return brightestRowIndex
+	}
+
+	@Spec('Applies the currently selected uploaded image row to the synth and refreshes the visible waveform status cards.')
+	private applySelectedWaveformRow() {
+		const selectedRow = this.imageWaveformRows[this.selectedRowIndex] ?? null
+		if (selectedRow === null) {
+			this.synth.setWaveformSamples(null)
+			this.waveformLabel = 'Sine'
+			this.waveformDetailText = 'No uploaded image row is active yet.'
+			return
+		}
+		this.synth.setWaveformSamples(selectedRow.samples)
+		this.waveformLabel = `Image row ${this.selectedRowIndex + 1}`
+		this.waveformDetailText = `Uploaded waveform row ${this.selectedRowIndex + 1} of ${this.availableRowCount} is active. Average brightness ${(selectedRow.averageBrightness * 100).toFixed(1)}%.`
+	}
+
+	@Spec('Handles a visible row selection change so users can audition different uploaded image rows as stable waveforms.')
+	private onRowSelectionChange(event: Event) {
+		const input = event.currentTarget as HTMLInputElement | null
+		const nextRowIndex = Number(input?.value ?? '0')
+		if (Number.isFinite(nextRowIndex) === false) {
+			return
+		}
+		this.selectedRowIndex = Math.max(0, Math.min(nextRowIndex, Math.max(this.availableRowCount - 1, 0)))
+		this.applySelectedWaveformRow()
+	}
+
+	@Spec('Releases the current uploaded image object URL when a new preview replaces it or the app unmounts.')
+	private revokeUploadedImageUrl() {
+		if (this.uploadedImageUrl === null) {
+			return
+		}
+		URL.revokeObjectURL(this.uploadedImageUrl)
+		this.uploadedImageUrl = null
+	}
+
+	@Spec('Renders the QWERTY keyboard guide, mono-poly switch, visible synth status cards, and the uploaded image waveform panel.')
 	render(): TemplateResult {
 		return html`
 			<main>
 				<header>
 					<div class="header-copy">
-						<p class="eyebrow">Phase 2 — Playable QWERTY Keyboard</p>
+						<p class="eyebrow">Phase 3 — Image Upload and Row-Based Waveform Synth</p>
 						<h1>Scanline Synth</h1>
 						<p class="lead">
-							The synth now feels more like a warm vintage instrument panel, with mapped QWERTY notes,
-							retro status displays, and a mono-poly performance switch.
+							Upload an image, turn its horizontal rows into single-cycle waveforms, and keep playing the
+							QWERTY keyboard while selecting which row shapes the active timbre.
 						</p>
 					</div>
 					<div class="brand-plate" aria-label="Instrument panel badge">
@@ -527,46 +710,84 @@ export class App extends LitElement {
 					</label>
 				</section>
 
-				<section class="status-grid" aria-label="Keyboard synth status">
-					<div class="status-card">
-						<div class="status-label">Waveform</div>
-						<div id="waveform-value" class="status-value">Sine</div>
-					</div>
-					<div class="status-card">
-						<div class="status-label">Envelope</div>
-						<div id="envelope-value" class="status-value">40 ms attack · 120 ms release</div>
-					</div>
-					<div class="status-card">
-						<div class="status-label">Voice mode</div>
-						<div id="voice-mode-value" class="status-value">${this.isMonophonic ? 'Monophonic' : 'Polyphonic'}</div>
-					</div>
-					<div class="status-card">
-						<div class="status-label">Sounding voices</div>
-						<div id="sounding-voices-value" class="status-value">${this.soundingVoiceCount}</div>
-					</div>
-					<div class="status-card">
-						<div class="status-label">Active key</div>
-						<div id="active-key-value" class="status-value">${this.activeKeyLabel}</div>
-					</div>
-					<div class="status-card">
-						<div class="status-label">Active note</div>
-						<div id="active-note-value" class="status-value">${this.activeNoteLabel}</div>
-					</div>
-					<div class="status-card">
-						<div class="status-label">Pitch</div>
-						<div id="pitch-value" class="status-value">${this.pitchLabel}</div>
-					</div>
-					<div class="status-card">
-						<div class="status-label">Note state</div>
-						<div id="note-state-value" class="status-value">${this.noteStateLabel}</div>
-					</div>
-					<div class="status-card">
-						<div class="status-label">Trigger count</div>
-						<div id="trigger-count-value" class="status-value">${this.triggerCount}</div>
-					</div>
+				<section class="status-upload-layout" aria-label="Synth status and uploaded image panel">
+					<section class="status-grid" aria-label="Keyboard synth status">
+						<div class="status-card">
+							<div class="status-label">Waveform</div>
+							<div id="waveform-value" class="status-value">${this.waveformLabel}</div>
+						</div>
+						<div class="status-card">
+							<div class="status-label">Envelope</div>
+							<div id="envelope-value" class="status-value">40 ms attack · 120 ms release</div>
+						</div>
+						<div class="status-card">
+							<div class="status-label">Voice mode</div>
+							<div id="voice-mode-value" class="status-value">${this.isMonophonic ? 'Monophonic' : 'Polyphonic'}</div>
+						</div>
+						<div class="status-card">
+							<div class="status-label">Sounding voices</div>
+							<div id="sounding-voices-value" class="status-value">${this.soundingVoiceCount}</div>
+						</div>
+						<div class="status-card">
+							<div class="status-label">Active key</div>
+							<div id="active-key-value" class="status-value">${this.activeKeyLabel}</div>
+						</div>
+						<div class="status-card">
+							<div class="status-label">Active note</div>
+							<div id="active-note-value" class="status-value">${this.activeNoteLabel}</div>
+						</div>
+						<div class="status-card">
+							<div class="status-label">Pitch</div>
+							<div id="pitch-value" class="status-value">${this.pitchLabel}</div>
+						</div>
+						<div class="status-card">
+							<div class="status-label">Note state</div>
+							<div id="note-state-value" class="status-value">${this.noteStateLabel}</div>
+						</div>
+						<div class="status-card">
+							<div class="status-label">Trigger count</div>
+							<div id="trigger-count-value" class="status-value">${this.triggerCount}</div>
+						</div>
+					</section>
+
+					<section class="upload-card" aria-label="Image upload panel">
+						<div class="status-label">Reference image</div>
+						<label class="upload-button" for="image-upload-input">Upload image</label>
+						<input id="image-upload-input" class="upload-input" type="file" accept="image/*" @change=${this.onImageSelection} />
+						<div class="plate-value" id="uploaded-image-name">${this.uploadedImageName}</div>
+						<div class="upload-controls">
+							<div class="status-label">Waveform row select</div>
+							<input
+								id="waveform-row-slider"
+								class="row-slider"
+								type="range"
+								min="0"
+								max=${Math.max(this.availableRowCount - 1, 0)}
+								.value=${String(this.selectedRowIndex)}
+								?disabled=${this.availableRowCount <= 1}
+								@input=${this.onRowSelectionChange}
+							/>
+							<div id="waveform-row-value" class="plate-value">${this.availableRowCount === 0 ? 'No rows loaded' : `Row ${this.selectedRowIndex + 1} of ${this.availableRowCount}`}</div>
+						</div>
+						<div class="upload-preview" id="uploaded-image-preview">
+							${this.uploadedImageUrl === null
+								? html`<div class="upload-placeholder">Choose an image to show it here on the right side of the panel.</div>`
+								: html`<img id="uploaded-image-element" src=${this.uploadedImageUrl} alt=${`Uploaded preview for ${this.uploadedImageName}`} />`}
+						</div>
+						<div class="waveform-preview-panel">
+							<div class="status-label">Selected waveform</div>
+							<image-waveform-preview
+								.samples=${[...(this.imageWaveformRows[this.selectedRowIndex]?.samples ?? [])]}
+								previewLabel=${'Selected waveform preview'}
+								.rowIndex=${this.availableRowCount === 0 ? -1 : this.selectedRowIndex}
+								.rowCount=${this.availableRowCount}
+							></image-waveform-preview>
+						</div>
+					</section>
 				</section>
 
 				<section class="detail" id="note-detail-text">${this.noteDetailText}</section>
+				<section class="detail" id="waveform-detail-text">${this.waveformDetailText}</section>
 			</main>
 		`
 	}

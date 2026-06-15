@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - client/**
-      - shared/**
       - .github/workflows/deploy-pages.yml
   workflow_dispatch:
 
@@ -47,8 +46,8 @@ jobs:
       - name: Install client dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build static site
-        run: pnpm run build
+      - name: Build client Pages site
+        run: pnpm run build:pages
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

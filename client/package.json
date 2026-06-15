@@ -5,12 +5,14 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit --watch",
+    "typecheck:pages": "tsc -p tsconfig.pages.json",
     "dev": "node scripts/dev-with-emit.mjs",
     "dev:vite": "vite",
     "dev:emit": "tsc -w --preserveWatchOutput",
     "lll-server": "evidyts --server start --port 47033 --projectPath . --projectClientLink http://localhost:47031",
     "lll-check": "tsc --preserveWatchOutput && evidyts --project tsconfig.json --entry src/Start.lll.ts --clientTunnel http://localhost:47033 --noEmit",
     "build": "tsc && vite build",
+    "build:pages": "pnpm run typecheck:pages && vite build",
     "preview": "vite preview",
     "i": "pnpm i"
   },

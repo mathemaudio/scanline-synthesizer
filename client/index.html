@@ -11,11 +11,78 @@
 			box-sizing: border-box;
 			margin: 0;
 		}
+
+		.evidype-corner {
+			position: fixed;
+			left: 0;
+			bottom: 0;
+			width: 7rem;
+			height: 7rem;
+			overflow: hidden;
+			z-index: 2147483647;
+			pointer-events: none;
+		}
+
+		.evidype-corner__link {
+			position: absolute;
+			left: -2.85rem;
+			bottom: .7rem;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			width: 10rem;
+			padding: 0.55rem 0;
+			background: linear-gradient(135deg, #c3b694 0%, #6d6438 48%, #9b845e 100%);
+			color: #ffffff;
+			font-family: Arial, Helvetica, sans-serif;
+			font-size: 0.7rem;
+			font-weight: 800;
+			letter-spacing: 0.12em;
+			line-height: 1.1;
+			text-align: center;
+			text-decoration: none;
+			text-transform: uppercase;
+			transform: rotate(45deg);
+			transform-origin: center;
+			box-shadow: 0 0.7rem 1.8rem rgba(0, 0, 0, 0.32);
+			pointer-events: auto;
+		}
+
+		.evidype-corner__link::before,
+		.evidype-corner__link::after {
+			content: "";
+			position: absolute;
+			top: 0;
+			width: 0;
+			height: 0;
+			border-top: 1.15rem solid transparent;
+			border-bottom: 1.15rem solid transparent;
+		}
+
+		.evidype-corner__link::before {
+			left: -1.15rem;
+			border-right: 1.15rem solid #aeaeae;
+		}
+
+		.evidype-corner__link::after {
+			right: -1.15rem;
+			border-left: 1.15rem solid #616161;
+		}
+
+		.evidype-corner__link:hover {
+			filter: brightness(1.06);
+		}
 	</style>
 	<title></title>
 </head>
 
 <body>
+	<div class="evidype-corner">
+		<a class="evidype-corner__link" href="https://evidype.com/" target="_blank" rel="noreferrer"
+			aria-label="Made with Evidype">
+			<span>Made With<br />Evidype</span>
+		</a>
+	</div>
 	<div id="app"></div>
 	<script type="module" src="/src/Start.lll.ts"></script>
 </body>
